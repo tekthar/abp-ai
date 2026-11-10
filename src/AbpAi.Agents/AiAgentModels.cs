@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Toda.Agents;
+using AbpAgent;
 using Volo.Abp.Modularity;
 
 namespace AbpAi.Agents;

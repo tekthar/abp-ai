@@ -6,6 +6,10 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+The first release, at the same version as AbpGuard and AbpAgent.
+
 ### Added
 
 - `AbpAi.Contracts`: `IAi` (`CompleteAsync`, `StreamAsync`, `ResolveAsync`), `AiRequest`, `AiReply`, `AiStreamEvent`,
@@ -16,5 +20,6 @@ All notable changes to AbpAi are written here. The format follows
   limits per scope, per person, per group and per account (`AiLedger`), data rules (`AiDataRules`), the admin API
   (`AiAdminService`), usage queries and CSV export (`AiUsageService`), the demo model's script (`AiScript`),
   providers for Anthropic, OpenAI-compatible APIs and the demo model, and housekeeping. Tables in schema `ai`.
-- `AbpAi.Agents`: AbpAgent's `IAgentModels` on `IAi` (`AiAgentModels`, `AbpAiAgentsModule`, `IAiAgentCalls`).
+- `AbpAi.Agents`: AbpAgent's `IAgentModels` on `IAi` (`AiAgentModels`, `AbpAiAgentsModule`, `IAiAgentCalls`), on
+  `AbpAgent.Contracts` 0.2.0.
 - A sample host (an organization's departments over projects) and its tests on PostgreSQL.

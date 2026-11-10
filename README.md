@@ -81,9 +81,7 @@ AbpAi](docs/moving-onto-abp-ai.md). Why it is shaped this way, and the answers t
 dotnet build AbpAi.slnx
 ```
 
-`AbpAi.Agents` builds against AbpAgent's contracts from a checkout of `todahq/toda-agents` beside this repository
-(`../toda-agents`), or wherever `AbpAgentContractsDir` points. The host tests need PostgreSQL on localhost:5432
-(postgres/postgres), or the server `ABP_AI_TEST_POSTGRES` names.
+The host tests need PostgreSQL on localhost:5432 (postgres/postgres), or the server `ABP_AI_TEST_POSTGRES` names.
 
 ```bash
 dotnet test AbpAi.slnx
@@ -92,7 +90,7 @@ dotnet test AbpAi.slnx
 ## Releasing
 
 Set `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, move CHANGELOG.md's Unreleased to the version, and
-push a tag `v<version>` (`v0.1.0-preview.1`). CI runs the checks, then pushes `AbpAi` and `AbpAi.Contracts` to
+push a tag `v<version>` (`v0.2.0`). CI runs the checks, then pushes `AbpAi`, `AbpAi.Contracts` and `AbpAi.Agents` to
 nuget.org through Trusted Publishing (the policy names this repository, `ci.yml` and the `release` environment; the
 repository variable `NUGET_USER` is the nuget.org account) and makes a GitHub release.
 
