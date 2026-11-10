@@ -14,12 +14,12 @@
     <Company>Tekthar</Company>
     <Copyright>Copyright 2026 AbpAi contributors</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/todahq/abp-ai</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/todahq/abp-ai.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/tekthar/abp-ai</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tekthar/abp-ai.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>ai;llm;gateway;anthropic;openai;limits;abp;efcore;postgresql</PackageTags>
-    <PackageReleaseNotes>https://github.com/todahq/abp-ai/blob/main/CHANGELOG.md</PackageReleaseNotes>
+    <PackageReleaseNotes>https://github.com/tekthar/abp-ai/blob/main/CHANGELOG.md</PackageReleaseNotes>
 
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
