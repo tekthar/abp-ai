@@ -89,6 +89,13 @@ dotnet build AbpAi.slnx
 dotnet test AbpAi.slnx
 ```
 
+## Releasing
+
+Set `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, move CHANGELOG.md's Unreleased to the version, and
+push a tag `v<version>` (`v0.1.0-preview.1`). CI runs the checks, then pushes `AbpAi` and `AbpAi.Contracts` to
+nuget.org through Trusted Publishing (the policy names this repository, `ci.yml` and the `release` environment; the
+repository variable `NUGET_USER` is the nuget.org account) and makes a GitHub release.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
