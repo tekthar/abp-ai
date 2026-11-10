@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Public contracts of AbpAi: the call (IAi), its records and refusals, the provider seam (IAiProvider), the demo model's responders, and what a host gives (scopes, rights, groups, notices).</Description>
+    <RootNamespace>AbpAi</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Plain .NET: nothing of ABP's or EF Core's, so any host or package can speak to the gateway. An architecture test holds this. -->
+
+</Project>

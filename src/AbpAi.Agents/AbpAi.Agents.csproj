@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Not packed until AbpAgent's contracts are on nuget.org: its package would depend on one that isn't there. -->
+    <IsPackable>false</IsPackable>
+    <Description>AbpAgent's model (IAgentModels) on top of AbpAi's IAi, so neither package needs the other: an agent's calls get the gateway's aliases, limits, data rules and usage.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AbpAi\AbpAi.csproj" />
+    <ProjectReference Include="$(AbpAgentContractsDir)Toda.Agents.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

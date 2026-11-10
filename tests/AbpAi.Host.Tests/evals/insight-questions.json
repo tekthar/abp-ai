@@ -1,0 +1,13 @@
+{
+  "questions": [
+    { "question": "What was revenue by region last quarter?", "dataClass": "aggregates", "expect": "Revenue" },
+    { "question": "Which customers churned in March?", "dataClass": "rows", "expect": "churned" },
+    { "question": "Describe the orders table.", "dataClass": "internal", "expect": "orders" }
+  ],
+  "script": [
+    { "when": { "purpose": "agent:ask", "contains": "revenue" }, "tool": { "name": "run_query", "input": { "sql": "select region, sum(amount) from orders group by region" } }, "once": true },
+    { "when": { "purpose": "agent:ask", "contains": "revenue" }, "reply": "Revenue by region: North 120, South 80." },
+    { "when": { "purpose": "agent:ask", "contains": "churned" }, "reply": "Three customers churned in March." },
+    { "when": { "purpose": "agent:ask", "contains": "orders" }, "reply": "The orders table holds one row per order: its region, amount and date." }
+  ]
+}

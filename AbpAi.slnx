@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/AbpAi.SampleHost/AbpAi.SampleHost.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AbpAi.Contracts/AbpAi.Contracts.csproj" />
+    <Project Path="src/AbpAi/AbpAi.csproj" />
+    <Project Path="src/AbpAi.Agents/AbpAi.Agents.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AbpAi.Tests/AbpAi.Tests.csproj" />
+    <Project Path="tests/AbpAi.Host.Tests/AbpAi.Host.Tests.csproj" />
+  </Folder>
+</Solution>

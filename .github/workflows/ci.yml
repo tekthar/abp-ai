@@ -1,0 +1,52 @@
+# Pushes to main and pull requests run the checks: build, the unit tests, the integration tests against PostgreSQL
+# through the sample host, and pack. AbpAi.Agents builds against AbpAgent's contracts from a checkout of
+# todahq/toda-agents until those are on nuget.org.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ABP_AI_TEST_POSTGRES: "Host=localhost;Port=5432;Username=postgres;Password=postgres"
+      AbpAgentContractsDir: ${{ github.workspace }}/deps/toda-agents/src/Toda.Agents.Contracts/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: todahq/toda-agents
+          path: deps/toda-agents
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build AbpAi.slnx -c Release
+      - run: dotnet test AbpAi.slnx -c Release --no-build
+      - run: dotnet pack AbpAi.slnx -c Release --no-build -o artifacts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: artifacts/
