@@ -7,8 +7,7 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <!-- One version for every package (see CHANGELOG.md); a VersionSuffix makes a prerelease. -->
-    <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>preview.1</VersionSuffix>
+    <VersionPrefix>0.2.0</VersionPrefix>
 
     <Authors>AbpAi contributors</Authors>
     <Company>Tekthar</Company>
@@ -30,8 +29,8 @@
 
   <PropertyGroup>
     <AbpVersion>10.6.1</AbpVersion>
-    <!-- AbpAgent's contracts, for AbpAi.Agents: a checkout of todahq/toda-agents beside this one, until they're on nuget.org. -->
-    <AbpAgentContractsDir Condition="'$(AbpAgentContractsDir)' == ''">$(MSBuildThisFileDirectory)../toda-agents/src/Toda.Agents.Contracts/</AbpAgentContractsDir>
+    <!-- AbpAgent's contracts, for AbpAi.Agents. -->
+    <AbpAgentVersion>0.2.0</AbpAgentVersion>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' != 'false'">

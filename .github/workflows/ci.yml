@@ -1,8 +1,7 @@
 # Pushes to main and pull requests run the checks: build, the unit tests, the integration tests against PostgreSQL
-# through the sample host, and pack. AbpAi.Agents builds against AbpAgent's contracts from a checkout of
-# todahq/toda-agents until those are on nuget.org. A v<version> tag runs the checks, then pushes the packages
-# (AbpAi, AbpAi.Contracts) to nuget.org through Trusted Publishing (a one-hour key nuget.org gives this workflow, no
-# stored secret) and makes a GitHub release.
+# through the sample host, and pack. A v<version> tag runs the checks, then pushes the packages (AbpAi,
+# AbpAi.Contracts, AbpAi.Agents) to nuget.org through Trusted Publishing (a one-hour key nuget.org gives this
+# workflow, no stored secret) and makes a GitHub release.
 
 name: CI
 
@@ -36,13 +35,8 @@ jobs:
           --health-retries 20
     env:
       ABP_AI_TEST_POSTGRES: "Host=localhost;Port=5432;Username=postgres;Password=postgres"
-      AbpAgentContractsDir: ${{ github.workspace }}/deps/toda-agents/src/Toda.Agents.Contracts/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: todahq/toda-agents
-          path: deps/toda-agents
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "10.0.x"
@@ -71,7 +65,7 @@ jobs:
       - name: The tag is the packages' version
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for id in AbpAi AbpAi.Contracts; do
+          for id in AbpAi AbpAi.Contracts AbpAi.Agents; do
             test -f "artifacts/$id.$version.nupkg" || { echo "No $id.$version.nupkg: the tag and VersionPrefix/VersionSuffix differ."; ls artifacts; exit 1; }
           done
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0

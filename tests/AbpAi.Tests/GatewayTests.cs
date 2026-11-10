@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using AbpAi.Agents;
 using AbpAi.Providers;
 using Microsoft.Extensions.Options;
-using Toda.Agents;
+using AbpAgent;
 
 namespace AbpAi.Tests;
 
