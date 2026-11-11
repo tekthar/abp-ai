@@ -103,6 +103,44 @@ public static class AiMessages
         return last;
     }
 
+    /// <summary>The conversation holds an image: an <c>image</c> block in a message, or in a tool's result.</summary>
+    public static bool HasImages(JsonElement messages)
+    {
+        if (messages.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (JsonElement message in messages.EnumerateArray())
+        {
+            if (message.ValueKind == JsonValueKind.Object && message.TryGetProperty("content", out JsonElement content) && HasImageBlock(content))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasImageBlock(JsonElement content)
+    {
+        if (content.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (JsonElement block in content.EnumerateArray())
+        {
+            if (block.ValueKind == JsonValueKind.Object && block.TryGetProperty("type", out JsonElement type)
+                && (type.ValueEquals("image") || (type.ValueEquals("tool_result") && block.TryGetProperty("content", out JsonElement inner) && HasImageBlock(inner))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>The text as JSON, when it is (a fenced block's inside too); else null.</summary>
     public static JsonElement? TryParseJson(string text)
     {

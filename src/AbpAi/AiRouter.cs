@@ -3,35 +3,57 @@ using Volo.Abp.DependencyInjection;
 
 namespace AbpAi;
 
-/// <summary>Where a call goes: the connection, the model, and where the alias was set.</summary>
+/// <summary>Where a call goes: the connection, the model (by the provider's id), where the alias was set, and what the model can do.</summary>
 public sealed record AiRoute(string Alias, AiConnectionDescriptor Connection, string Model, string Source, Guid? SetOnScopeId)
 {
+    /// <summary>What people and aliases call the model.</summary>
+    public string ModelName { get; init; } = Model;
+
+    /// <summary>The model takes tools.</summary>
+    public bool Tools { get; init; } = true;
+
+    /// <summary>The model takes images.</summary>
+    public bool Images { get; init; } = true;
+
     /// <summary>The model follows a JSON schema for a reply.</summary>
     public bool StructuredOutput { get; init; } = Connection.StructuredOutput;
 
     public AiChoice ToChoice() => new(Alias, Model, Connection.Provider, Connection.Id, Connection.Name, Source, SetOnScopeId, StructuredOutput,
-        Connection.DataClasses, Connection.Labels);
+        Connection.DataClasses, Connection.Labels)
+    {
+        ModelName = ModelName,
+        Tools = Tools,
+        Images = Images,
+    };
 }
 
-/// <summary>What a call needs of a model: to follow a schema for its reply.</summary>
-public sealed record AiNeeds(bool StructuredOutput = false)
+/// <summary>What a call needs of a model: to take its tools, to take its images, to follow a schema for its reply.</summary>
+public sealed record AiNeeds(bool Tools = false, bool Images = false, bool StructuredOutput = false)
 {
     public static readonly AiNeeds None = new();
 
-    public static AiNeeds Of(AiRequest request) => new(request.OutputSchema is not null);
+    public static AiNeeds Of(AiRequest request) =>
+        new(request.Tools is { ValueKind: System.Text.Json.JsonValueKind.Array } tools && tools.GetArrayLength() > 0, AiMessages.HasImages(request.Messages),
+            request.OutputSchema is not null);
+
+    /// <summary>A model can do what the call needs.</summary>
+    public bool MetBy(AiRoute route) => (!Tools || route.Tools) && (!Images || route.Images) && (!StructuredOutput || route.StructuredOutput);
+
+    public override string ToString() =>
+        string.Join(" and ", new[] { Tools ? "takes tools" : null, Images ? "takes images" : null, StructuredOutput ? "follows a schema" : null }.OfType<string>());
 }
 
 /// <summary>
 /// Leads an alias to a model: the alias set on the call's scope, else on the nearest scope above it, else on the site;
-/// else a model by its name on the nearest connection that offers it. Of the alias's targets, the first that is on, may
-/// receive the call's data, and (when asked) follows a schema; the rest are its fallbacks. Connections come from the
-/// <see cref="IAiConnectionSource"/>.
+/// else a model by its name (or its id) on the nearest connection that offers it. Of the alias's targets, the first
+/// whose model is on, can do what the call needs (tools, images, a schema) and may receive the call's data answers;
+/// the rest are its fallbacks. Connections come from the <see cref="IAiConnectionSource"/>.
 /// </summary>
 public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource source) : ITransientDependency
 {
     /// <summary>As <see cref="ChooseAsync(string, AiScopeChain, string, AiNeeds, CancellationToken)"/>, for a call that may need a schema.</summary>
     public Task<AiRoute> ChooseAsync(string alias, AiScopeChain chain, string dataClass, bool structured, CancellationToken ct) =>
-        ChooseAsync(alias, chain, dataClass, new AiNeeds(structured), ct);
+        ChooseAsync(alias, chain, dataClass, new AiNeeds(StructuredOutput: structured), ct);
 
     public async Task<AiRoute> ChooseAsync(string alias, AiScopeChain chain, string dataClass, AiNeeds needs, CancellationToken ct)
     {
@@ -57,29 +79,54 @@ public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource s
         AiAlias? named = aliases.OrderBy(a => chain.Nearness(a.ScopeId)).FirstOrDefault();
         List<AiRoute> candidates = named is not null
             ? [.. named.Targets.Where(t => usable.ContainsKey(t.ConnectionId))
-                .Select(t => usable[t.ConnectionId] is var c && (t.Model ?? c.Models.FirstOrDefault()) is { Length: > 0 } model
-                    ? new AiRoute(name, c, model, named.ScopeId is null ? "site" : "scope", named.ScopeId)
+                .Select(t => usable[t.ConnectionId] is var c && (t.Model is null ? DefaultModel(c) : c.ModelIdOf(t.Model) ?? t.Model) is { Length: > 0 } model
+                    ? Route(name, c, model, named.ScopeId is null ? "site" : "scope", named.ScopeId)
                     : null)
                 .OfType<AiRoute>()]
-            : [.. usable.Values.Where(c => c.Models.Contains(name, StringComparer.Ordinal)).OrderBy(c => chain.Nearness(c.ScopeId)).ThenBy(c => c.Name)
-                .Select(c => new AiRoute(name, c, name, "model", c.ScopeId))];
+            : [.. usable.Values.OrderBy(c => chain.Nearness(c.ScopeId)).ThenBy(c => c.Name)
+                .Select(c => ModelCalled(c, name) is { } model ? Route(name, c, model, "model", c.ScopeId) : null)
+                .OfType<AiRoute>()];
 
-        if (needs.StructuredOutput)
+        List<AiRoute> fit = [.. candidates.Where(needs.MetBy)];
+        if (fit.Count == 0)
         {
-            candidates = [.. candidates.Where(r => r.StructuredOutput)];
-        }
-
-        if (candidates.Count == 0)
-        {
-            string why = named is null ? $"No alias or model \"{name}\" is set up here." : $"No model \"{name}\" leads to is on{(needs.StructuredOutput ? " and follows a schema" : "")}.";
+            string what = needs.ToString();
+            string why = named is null && candidates.Count == 0
+                ? $"No alias or model \"{name}\" is set up here."
+                : $"No model \"{name}\" leads to is on{(what.Length > 0 ? " and " + what : "")}.";
             throw new AiRefusedException(AiRefusalCodes.NoModel, why);
         }
 
-        return candidates.FirstOrDefault(r => AiDataRules.Allows(r.Connection, dataClass))
+        return fit.FirstOrDefault(r => AiDataRules.Allows(r.Connection, dataClass))
             ?? throw new AiRefusedException(AiRefusalCodes.DataNotAllowed,
-                $"\"{name}\" leads only to models that may not receive {dataClass} data ({string.Join(", ", candidates.Select(r => r.Connection.Name).Distinct())}).");
+                $"\"{name}\" leads only to models that may not receive {dataClass} data ({string.Join(", ", fit.Select(r => r.Connection.Name).Distinct())}).");
     }
 
     /// <summary>The class a call counts as.</summary>
     public string ClassOf(string? stated) => rules.ClassOf(stated);
+
+    /// <summary>A connection's first model that's on.</summary>
+    private static string? DefaultModel(AiConnectionDescriptor c) => c.Models.FirstOrDefault(m => c.SettingsOf(m) is not { Enabled: false });
+
+    /// <summary>The model a call names by its id or its name, when it's on: by its id first.</summary>
+    private static string? ModelCalled(AiConnectionDescriptor c, string name) =>
+        c.Models.Where(m => c.SettingsOf(m) is not { Enabled: false }).OrderBy(m => m == name ? 0 : 1).FirstOrDefault(m => m == name || c.NameOf(m) == name);
+
+    /// <summary>
+    /// The route to a model, with what it can do; null when it's off. A model with no settings is on and takes
+    /// everything; one with settings takes what they say, and follows a schema as they say, else as its connection does.
+    /// </summary>
+    private static AiRoute? Route(string alias, AiConnectionDescriptor c, string model, string where, Guid? setOn)
+    {
+        AiModelSettings? settings = c.SettingsOf(model);
+        return settings is { Enabled: false }
+            ? null
+            : new AiRoute(alias, c, model, where, setOn)
+            {
+                ModelName = c.NameOf(model),
+                Tools = settings?.Tools ?? true,
+                Images = settings?.Images ?? true,
+                StructuredOutput = settings?.StructuredOutput ?? c.StructuredOutput,
+            };
+    }
 }

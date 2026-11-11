@@ -86,6 +86,12 @@ namespace AbpAi.SampleHost.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<string>("ModelSettings")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'{}'::jsonb");
+
                     b.Property<string>("Models")
                         .IsRequired()
                         .HasColumnType("jsonb");

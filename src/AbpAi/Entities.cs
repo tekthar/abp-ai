@@ -41,6 +41,12 @@ public class AiConnection : Entity<Guid>
     /// <summary>The models it offers; the first is its default. A call naming one of these by name may reach it.</summary>
     public List<string> Models { get; set; } = [];
 
+    /// <summary>
+    /// Its models' settings, by the provider's ids: a name to call it by, whether it's on, and what it can do. A model
+    /// with none is on and takes everything, as every model did before models had settings.
+    /// </summary>
+    public Dictionary<string, AiModelSettings> ModelSettings { get; set; } = [];
+
     /// <summary>The data classes it may receive. A call whose class isn't here is refused before it leaves.</summary>
     public List<string> DataClasses { get; set; } = [];
 

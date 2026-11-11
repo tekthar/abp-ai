@@ -74,6 +74,41 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
         }
     }
 
+    /// <summary>The models the connection may call (<c>GET /v1/models</c>), every page of them.</summary>
+    public async Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken)
+    {
+        List<string> ids = [];
+        string? after = null;
+        for (int page = 0; page < 20; page++)
+        {
+            using HttpRequestMessage request = new(HttpMethod.Get, Address(target, "models") + "?limit=1000" + (after is null ? "" : "&after_id=" + Uri.EscapeDataString(after)));
+            Authorize(request, target);
+            using HttpResponseMessage response = await httpClients.CreateClient(nameof(AnthropicProvider)).SendAsync(request, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AiProviderException($"Anthropic answered {(int)response.StatusCode}: {Excerpt(body)}", (int)response.StatusCode);
+            }
+
+            using JsonDocument doc = JsonDocument.Parse(body);
+            JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("data", out JsonElement data) && data.ValueKind == JsonValueKind.Array)
+            {
+                ids.AddRange(data.EnumerateArray().Select(m => m.TryGetProperty("id", out JsonElement id) ? id.GetString() : null).OfType<string>());
+            }
+
+            if (!(root.TryGetProperty("has_more", out JsonElement more) && more.ValueKind == JsonValueKind.True
+                && root.TryGetProperty("last_id", out JsonElement last) && last.GetString() is { Length: > 0 } lastId))
+            {
+                break;
+            }
+
+            after = lastId;
+        }
+
+        return ids;
+    }
+
     internal static JsonObject Body(AiProviderCall call, bool stream)
     {
         JsonObject body = new()
@@ -118,36 +153,47 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
 
     private static HttpRequestMessage Request(AiProviderCall call, bool stream)
     {
-        string endpoint = string.IsNullOrWhiteSpace(call.Target.Endpoint) ? DefaultEndpoint : call.Target.Endpoint.TrimEnd('/');
-        HttpRequestMessage request = new(HttpMethod.Post, endpoint.EndsWith("/v1", StringComparison.Ordinal) ? endpoint + "/messages" : endpoint + "/v1/messages")
+        HttpRequestMessage request = new(HttpMethod.Post, Address(call.Target, "messages"))
         {
             Content = new StringContent(Body(call, stream).ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        IReadOnlyDictionary<string, string> settings = call.Target.Settings;
-        request.Headers.Add("anthropic-version", settings.TryGetValue("anthropic-version", out string? version) ? version : DefaultVersion);
-        if (settings.TryGetValue("anthropic-beta", out string? beta) && beta.Length > 0)
-        {
-            request.Headers.Add("anthropic-beta", beta);
-        }
-
-        if (!string.IsNullOrEmpty(call.Target.ApiKey))
-        {
-            if (settings.TryGetValue("auth", out string? auth) && auth == "bearer")
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", call.Target.ApiKey);
-            }
-            else
-            {
-                request.Headers.Add("x-api-key", call.Target.ApiKey);
-            }
-        }
-
+        Authorize(request, call.Target);
         if (stream)
         {
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
         }
 
         return request;
+    }
+
+    /// <summary>An address of the API: the endpoint (or Anthropic's) up to <c>/v1</c>, then the path.</summary>
+    private static string Address(AiTarget target, string path)
+    {
+        string endpoint = string.IsNullOrWhiteSpace(target.Endpoint) ? DefaultEndpoint : target.Endpoint.TrimEnd('/');
+        return endpoint.EndsWith("/v1", StringComparison.Ordinal) ? $"{endpoint}/{path}" : $"{endpoint}/v1/{path}";
+    }
+
+    /// <summary>The version, the betas, and the key: as <c>x-api-key</c>, or a bearer token when the connection says <c>auth</c> = <c>bearer</c>.</summary>
+    private static void Authorize(HttpRequestMessage request, AiTarget target)
+    {
+        IReadOnlyDictionary<string, string> settings = target.Settings;
+        request.Headers.Add("anthropic-version", settings.TryGetValue("anthropic-version", out string? version) ? version : DefaultVersion);
+        if (settings.TryGetValue("anthropic-beta", out string? beta) && beta.Length > 0)
+        {
+            request.Headers.Add("anthropic-beta", beta);
+        }
+
+        if (!string.IsNullOrEmpty(target.ApiKey))
+        {
+            if (settings.TryGetValue("auth", out string? auth) && auth == "bearer")
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", target.ApiKey);
+            }
+            else
+            {
+                request.Headers.Add("x-api-key", target.ApiKey);
+            }
+        }
     }
 
     private static (int Input, int Output) Tokens(JsonElement message) =>

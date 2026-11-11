@@ -12,7 +12,12 @@ namespace AbpAi.Providers;
 /// </summary>
 public sealed class DemoProvider(IEnumerable<IAiDemoResponder> responders, IOptions<AiOptions> options) : IAiProvider
 {
+    /// <summary>The one model the demo model lists when its models are asked for; a demo connection may name its models as it likes.</summary>
+    public const string ModelId = "demo";
+
     public string Kind => "demo";
+
+    public Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>?>([ModelId]);
 
     public async Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken)
     {

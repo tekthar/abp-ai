@@ -72,33 +72,59 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
         }
     }
 
-    private static HttpRequestMessage Request(AiProviderCall call, bool stream)
+    /// <summary>The models the server offers (<c>GET {endpoint}/models</c>).</summary>
+    public async Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken)
     {
-        IReadOnlyDictionary<string, string> settings = call.Target.Settings;
-        string endpoint = (string.IsNullOrWhiteSpace(call.Target.Endpoint) ? DefaultEndpoint : call.Target.Endpoint).TrimEnd('/');
-        string url = endpoint + "/chat/completions";
-        if (settings.TryGetValue("api-version", out string? apiVersion) && apiVersion.Length > 0)
+        using HttpRequestMessage request = new(HttpMethod.Get, Address(target, "models"));
+        Authorize(request, target);
+        using HttpResponseMessage response = await httpClients.CreateClient(nameof(OpenAiCompatibleProvider)).SendAsync(request, cancellationToken);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
         {
-            url += "?api-version=" + Uri.EscapeDataString(apiVersion);
+            throw new AiProviderException($"The provider answered {(int)response.StatusCode}: {AnthropicProvider.Excerpt(body)}", (int)response.StatusCode);
         }
 
-        HttpRequestMessage request = new(HttpMethod.Post, url)
+        using JsonDocument doc = JsonDocument.Parse(body);
+        return doc.RootElement.TryGetProperty("data", out JsonElement data) && data.ValueKind == JsonValueKind.Array
+            ? [.. data.EnumerateArray().Select(m => m.TryGetProperty("id", out JsonElement id) ? id.GetString() : null).OfType<string>()]
+            : [];
+    }
+
+    private static HttpRequestMessage Request(AiProviderCall call, bool stream)
+    {
+        HttpRequestMessage request = new(HttpMethod.Post, Address(call.Target, "chat/completions"))
         {
             Content = new StringContent(Body(call, stream).ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        if (!string.IsNullOrEmpty(call.Target.ApiKey))
+        Authorize(request, call.Target);
+        return request;
+    }
+
+    /// <summary>An address of the API: the endpoint (or OpenAI's), the path, and Azure's <c>api-version</c> when it's set.</summary>
+    private static string Address(AiTarget target, string path)
+    {
+        string endpoint = (string.IsNullOrWhiteSpace(target.Endpoint) ? DefaultEndpoint : target.Endpoint).TrimEnd('/');
+        return target.Settings.TryGetValue("api-version", out string? apiVersion) && apiVersion.Length > 0
+            ? $"{endpoint}/{path}?api-version={Uri.EscapeDataString(apiVersion)}"
+            : $"{endpoint}/{path}";
+    }
+
+    /// <summary>The key: a bearer token, or Azure's <c>api-key</c> header when the connection says <c>auth</c> = <c>api-key</c>.</summary>
+    private static void Authorize(HttpRequestMessage request, AiTarget target)
+    {
+        if (string.IsNullOrEmpty(target.ApiKey))
         {
-            if (settings.TryGetValue("auth", out string? auth) && auth == "api-key")
-            {
-                request.Headers.Add("api-key", call.Target.ApiKey);
-            }
-            else
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", call.Target.ApiKey);
-            }
+            return;
         }
 
-        return request;
+        if (target.Settings.TryGetValue("auth", out string? auth) && auth == "api-key")
+        {
+            request.Headers.Add("api-key", target.ApiKey);
+        }
+        else
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", target.ApiKey);
+        }
     }
 
     /// <summary>The Chat Completions request for a call in the Messages API's shape.</summary>

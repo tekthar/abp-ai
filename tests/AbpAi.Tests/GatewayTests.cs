@@ -123,6 +123,56 @@ public class GatewayTests
     }
 
     [Fact]
+    public void A_conversation_holds_images_when_a_message_or_a_tools_result_has_an_image_block()
+    {
+        Assert.False(AiMessages.HasImages(AiMessages.User("No pictures.")));
+        Assert.True(AiMessages.HasImages(Json("""[{"role":"user","content":[{"type":"text","text":"What's this?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}]""")));
+        Assert.True(AiMessages.HasImages(Json("""
+            [{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}]
+            """)));
+    }
+
+    [Fact]
+    public async Task Anthropic_lists_every_page_of_its_models_with_the_connections_key()
+    {
+        FakeHttp http = new(request => request.RequestUri!.Query.Contains("after_id=m2")
+            ? """{"data":[{"id":"claude-c"}],"has_more":false,"last_id":"claude-c"}"""
+            : """{"data":[{"id":"claude-a"},{"id":"claude-b"}],"has_more":true,"last_id":"m2"}""");
+        AiTarget target = new(Guid.NewGuid(), "anthropic", "https://gateway.example/v1", "sk-1", "", new Dictionary<string, string> { ["anthropic-beta"] = "b1" });
+
+        IReadOnlyList<string>? models = await new AnthropicProvider(http).ListModelsAsync(target, CancellationToken.None);
+        Assert.Equal(["claude-a", "claude-b", "claude-c"], models);
+        Assert.Equal("https://gateway.example/v1/models?limit=1000", http.Sent[0].Url);
+        Assert.Equal(("sk-1", AnthropicProvider.DefaultVersion, "b1"), (http.Sent[0].Headers["x-api-key"], http.Sent[0].Headers["anthropic-version"], http.Sent[0].Headers["anthropic-beta"]));
+        Assert.EndsWith("&after_id=m2", http.Sent[1].Url);
+    }
+
+    [Fact]
+    public async Task An_openai_compatible_server_lists_its_models_and_a_provider_that_cant_says_so()
+    {
+        FakeHttp http = new(_ => """{"object":"list","data":[{"id":"gpt-x"},{"id":"llama3.1"}]}""");
+        AiTarget azure = new(Guid.NewGuid(), "azure", "https://acme.openai.azure.com/openai", "k", "", new Dictionary<string, string> { ["api-version"] = "2025-01-01", ["auth"] = "api-key" });
+        Assert.Equal(["gpt-x", "llama3.1"], await new OpenAiCompatibleProvider(http).ListModelsAsync(azure, CancellationToken.None));
+        Assert.Equal(("https://acme.openai.azure.com/openai/models?api-version=2025-01-01", "k"), (http.Sent[0].Url, http.Sent[0].Headers["api-key"]));
+
+        Assert.Equal([DemoProvider.ModelId], await new DemoProvider([], Options.Create(new AiOptions())).ListModelsAsync(azure, CancellationToken.None));
+        Assert.Null(await ((IAiProvider)new SilentProvider()).ListModelsAsync(azure, CancellationToken.None));
+    }
+
+    [Fact]
+    public void A_connections_models_are_found_by_id_or_by_name_and_one_without_settings_takes_everything()
+    {
+        AiConnectionDescriptor connection = new(Guid.NewGuid(), null, "multi", "demo")
+        {
+            Models = ["m-1", "m-2"], ModelSettings = new Dictionary<string, AiModelSettings> { ["m-2"] = new() { Name = "vision", Images = true } },
+        };
+        Assert.Equal(("m-2", "m-2", "vision", "m-1"), (connection.ModelIdOf("vision"), connection.ModelIdOf("m-2"), connection.NameOf("m-2"), connection.NameOf("m-1")));
+        Assert.Null(connection.ModelIdOf("nonesuch"));
+        Assert.Null(connection.SettingsOf("m-1"));
+        Assert.True(new AiModelSettings().Enabled && new AiModelSettings().Tools && !new AiModelSettings().Images);
+    }
+
+    [Fact]
     public void A_conversation_with_tools_is_translated_to_chat_completions_and_back()
     {
         JsonElement messages = Json("""
@@ -266,6 +316,35 @@ public class GatewayTests
 
     private static AiProviderCall Call(JsonElement messages, string? system = null, JsonElement? tools = null, JsonElement? schema = null) =>
         new(new AiTarget(Guid.NewGuid(), "test", "", "key", "claude-opus-5-5", new Dictionary<string, string>()), messages, system, tools, 100, schema);
+
+    /// <summary>An HTTP client that answers every request with a body, and keeps each request's address and headers.</summary>
+    private sealed class FakeHttp(Func<HttpRequestMessage, string> answer) : IHttpClientFactory
+    {
+        public List<(string Url, Dictionary<string, string> Headers)> Sent { get; } = [];
+
+        public HttpClient CreateClient(string name) => new(new Handler(this));
+
+        private sealed class Handler(FakeHttp http) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                http.Sent.Add((request.RequestUri!.ToString(), request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value))));
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(http.Answer(request)) });
+            }
+        }
+
+        private string Answer(HttpRequestMessage request) => answer(request);
+    }
+
+    /// <summary>A provider that answers nothing and can't list its models.</summary>
+    private sealed class SilentProvider : IAiProvider
+    {
+        public string Kind => "silent";
+
+        public Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
 
     private sealed class FixedCalls(AiAgentCallInfo info) : IAiAgentCalls
     {

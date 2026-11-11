@@ -57,4 +57,10 @@ public interface IAiProvider
     /// <c>message_delta</c> before it carries <c>usage.output_tokens</c>, and <c>message_start</c> <c>usage.input_tokens</c>.
     /// </summary>
     IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The models the provider offers through a connection (its address, key and settings in the target), by their ids;
+    /// null when it can't list them, so an admin sets them by hand.
+    /// </summary>
+    Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>?>(null);
 }

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Volo.Abp;
 using Volo.Abp.DependencyInjection;
 using Volo.Abp.Domain.Entities;
+using Microsoft.Extensions.Options;
 using Volo.Abp.Security.Encryption;
 
 namespace AbpAi;
@@ -10,9 +11,15 @@ namespace AbpAi;
 /// <param name="ScopeDataClasses">The classes a scope's own connections may list at most: a scope's admin can't widen what leaves.</param>
 public sealed record AiSiteSettings(bool ScopesMayConnect, bool KeepPrompts, int PromptDays, IReadOnlyList<string> ScopeDataClasses, IReadOnlyList<string> DataClasses);
 
-/// <summary>A connection as an admin sets it. A null key keeps the one there; an empty one takes it away.</summary>
+/// <summary>
+/// A connection as an admin sets it. A null key keeps the one there; an empty one takes it away. Null model settings keep
+/// the ones there (for the models it still offers).
+/// </summary>
 public sealed record AiConnectionInput(string Name, string Provider, IReadOnlyList<string> Models, IReadOnlyList<string> DataClasses)
 {
+    /// <summary>Its models' settings, by their ids; a model left out has none (it's on and takes everything).</summary>
+    public IReadOnlyDictionary<string, AiModelSettings>? ModelSettings { get; init; }
+
     public string? Endpoint { get; init; }
     public string? ApiKey { get; init; }
     public IReadOnlyList<string>? Labels { get; init; }
@@ -27,7 +34,11 @@ public sealed record AiConnectionInput(string Name, string Provider, IReadOnlyLi
 /// <summary>A connection as an admin reads it: whether it has a key, never the key.</summary>
 public sealed record AiConnectionInfo(Guid Id, Guid? ScopeId, string Name, string Provider, string Endpoint, bool HasKey, IReadOnlyList<string> Models,
     IReadOnlyList<string> DataClasses, IReadOnlyList<string> Labels, IReadOnlyDictionary<string, string> Settings, decimal InputPrice, decimal OutputPrice,
-    IReadOnlyDictionary<string, AiPrice> ModelPrices, bool StructuredOutput, bool Enabled);
+    IReadOnlyDictionary<string, AiPrice> ModelPrices, bool StructuredOutput, bool Enabled)
+{
+    /// <summary>Its models' settings, by their ids.</summary>
+    public IReadOnlyDictionary<string, AiModelSettings> ModelSettings { get; init; } = new Dictionary<string, AiModelSettings>();
+}
 
 public sealed record AiAliasInfo(Guid Id, Guid? ScopeId, string Name, IReadOnlyList<AiAliasTarget> Targets, DateTime UpdatedAt);
 
@@ -44,7 +55,7 @@ public sealed record AiLimitInfo(Guid Id, Guid? ScopeId, string Kind, string Per
 /// them: creating, changing or deleting one here is refused with <see cref="AiErrorCodes.HostConnections"/>.
 /// </summary>
 public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains chains, AiDataRules rules, IEnumerable<IAiProvider> providers,
-    IStringEncryptionService encryption, IAiConnectionSource source) : ITransientDependency
+    IStringEncryptionService encryption, IAiConnectionSource source, IOptions<AiOptions> options) : ITransientDependency
 {
     /// <summary>The classes a scope's connections may list when the site hasn't said: nothing of the organization's data.</summary>
     public static readonly IReadOnlyList<string> DefaultScopeDataClasses = [AiDataClasses.Public, AiDataClasses.Internal];
@@ -136,6 +147,46 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         await aiDb.RunAsync(db => db.AiConnections.Where(c => c.Id == id).ExecuteDeleteAsync(ct), cancellationToken: ct);
     }
 
+    /// <summary>
+    /// The models a connection's provider offers, by their ids, asked of the provider through the connection: from
+    /// wherever connections are kept, so a host that keeps its own can find its models with the gateway's providers.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ProviderModelsAsync(AiActor actor, Guid? scopeId, Guid connectionId, CancellationToken ct)
+    {
+        await AdminAsync(actor, scopeId, ct);
+        AiConnectionDescriptor connection = (await source.ListAsync(scopeId is { } scope ? [scope] : [], ct)).FirstOrDefault(c => c.Id == connectionId && c.ScopeId == scopeId)
+            ?? throw new EntityNotFoundException(typeof(AiConnection), connectionId);
+        return await OfferedAsync(connection, ct);
+    }
+
+    /// <summary>
+    /// Asks a connection's provider which models it offers and adds the ones it doesn't list yet, each off (its settings'
+    /// <c>Enabled</c> false) until an admin turns it on. Only for connections AbpAi keeps.
+    /// </summary>
+    public async Task<AiConnectionInfo> DiscoverModelsAsync(AiActor actor, Guid connectionId, CancellationToken ct)
+    {
+        KeptHere();
+        AiConnection existing = await aiDb.RunAsync(db => db.AiConnections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == connectionId, ct), cancellationToken: ct)
+            ?? throw new EntityNotFoundException(typeof(AiConnection), connectionId);
+        await AdminAsync(actor, existing.ScopeId, ct);
+        IReadOnlyList<string> offered = await OfferedAsync(StoredAiConnections.Describe(existing), ct);
+        return await aiDb.RunAsync(async db =>
+        {
+            AiConnection connection = await db.AiConnections.FirstAsync(c => c.Id == connectionId, ct);
+            List<string> found = [.. offered.Select(m => m.Trim()).Where(m => m.Length is > 0 and <= 200 && !connection.Models.Contains(m)).Distinct()];
+            Dictionary<string, AiModelSettings> settings = new(connection.ModelSettings);
+            foreach (string model in found)
+            {
+                settings[model] = new AiModelSettings { Enabled = false };
+            }
+
+            connection.Models = [.. connection.Models, .. found];
+            connection.ModelSettings = settings;
+            await db.SaveChangesAsync(ct);
+            return Info(connection);
+        }, cancellationToken: ct);
+    }
+
     public async Task<List<AiAliasInfo>> ListAliasesAsync(AiActor actor, Guid? scopeId, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
@@ -156,6 +207,7 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
         AiScopeChain chain = await chains.OfAsync(scopeId, ct);
         IReadOnlyList<AiConnectionDescriptor> connections = await source.ListAsync([.. chain.Up], ct);
+        List<AiAliasTarget> kept = [];
         foreach (AiAliasTarget target in targets)
         {
             AiConnectionDescriptor? connection = connections.FirstOrDefault(c => c.Id == target.ConnectionId);
@@ -164,10 +216,10 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
                 throw new UserFriendlyException($"Connection {target.ConnectionId} isn't one this scope can use.", AiErrorCodes.Invalid);
             }
 
-            if (target.Model is not null && connection.Models.Count > 0 && !connection.Models.Contains(target.Model))
-            {
-                throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
-            }
+            // A model named by its name is kept by its id, so renaming it later doesn't break the alias.
+            string? model = target.Model is null || connection.Models.Count == 0 ? target.Model : connection.ModelIdOf(target.Model)
+                ?? throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
+            kept.Add(target with { Model = model });
         }
 
         return await aiDb.RunAsync(async db =>
@@ -179,7 +231,7 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
                 db.AiAliases.Add(alias);
             }
 
-            alias.Targets = [.. targets];
+            alias.Targets = kept;
             alias.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
             return Info(alias);
@@ -319,6 +371,7 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
     private void Apply(AiConnection connection, AiConnectionInput input)
     {
+        Dictionary<string, AiPrice> pricesBefore = connection.Models.Distinct().ToDictionary(m => m, connection.PriceOf);
         connection.Endpoint = input.Endpoint?.Trim() ?? "";
         if (input.ApiKey is not null)
         {
@@ -334,6 +387,63 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         connection.ModelPrices = input.ModelPrices?.ToDictionary() ?? [];
         connection.StructuredOutput = input.StructuredOutput;
         connection.Enabled = input.Enabled;
+
+        // Settings only for the models it offers; a model whose price changed has it said when.
+        Dictionary<string, AiModelSettings> settings = input.ModelSettings is { } given ? CheckedSettings(connection, given) : connection.ModelSettings;
+        DateTime now = DateTime.UtcNow;
+        connection.ModelSettings = connection.Models.Where(settings.ContainsKey).ToDictionary(m => m, m =>
+            connection.PriceOf(m) != pricesBefore.GetValueOrDefault(m, new AiPrice(0, 0)) ? settings[m] with { PriceSetAt = now } : settings[m]);
+    }
+
+    /// <summary>Model settings, checked: each for a model the connection offers, with a name no other of its models has.</summary>
+    private static Dictionary<string, AiModelSettings> CheckedSettings(AiConnection connection, IReadOnlyDictionary<string, AiModelSettings> given)
+    {
+        Dictionary<string, AiModelSettings> settings = [];
+        foreach ((string model, AiModelSettings value) in given)
+        {
+            if (!connection.Models.Contains(model))
+            {
+                throw new UserFriendlyException($"There are settings for {model}, which {connection.Name} doesn't offer.", AiErrorCodes.Invalid);
+            }
+
+            string? name = string.IsNullOrWhiteSpace(value.Name) ? null : value.Name.Trim();
+            if (name?.Length > 200 || value.ContextTokens < 1)
+            {
+                throw new UserFriendlyException($"{model}'s name is at most 200 characters, and its context holds at least one token.", AiErrorCodes.Invalid);
+            }
+
+            settings[model] = value with { Name = name };
+        }
+
+        List<string> names = [.. connection.Models.Select(m => settings.TryGetValue(m, out AiModelSettings? s) && s.Name is { } n ? n : m)];
+        if (names.Distinct(StringComparer.Ordinal).Count() != names.Count)
+        {
+            throw new UserFriendlyException($"Each of {connection.Name}'s models has a name of its own.", AiErrorCodes.Invalid);
+        }
+
+        return settings;
+    }
+
+    /// <summary>What a connection's provider says it offers; refused when the provider can't list its models or fails to.</summary>
+    private async Task<IReadOnlyList<string>> OfferedAsync(AiConnectionDescriptor connection, CancellationToken ct)
+    {
+        IAiProvider provider = providers.LastOrDefault(p => string.Equals(p.Kind, connection.Provider, StringComparison.OrdinalIgnoreCase))
+            ?? throw new UserFriendlyException($"No provider \"{connection.Provider}\" is installed for {connection.Name}.", AiErrorCodes.Invalid);
+        IReadOnlyList<string>? offered;
+        try
+        {
+            AiTarget target = new(connection.Id, connection.Name, connection.Endpoint, await source.KeyAsync(connection.Id, ct), connection.Models.FirstOrDefault() ?? "",
+                connection.Settings);
+            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(options.Value.ProviderTimeout);
+            offered = await provider.ListModelsAsync(target, timeout.Token);
+        }
+        catch (Exception ex) when (ex is not (UserFriendlyException or OperationCanceledException) || !ct.IsCancellationRequested && ex is OperationCanceledException)
+        {
+            throw new UserFriendlyException($"{connection.Name} couldn't list its models: {ex.Message}", AiErrorCodes.Invalid, innerException: ex);
+        }
+
+        return offered ?? throw new UserFriendlyException($"{connection.Name}'s provider can't list its models: set them by hand.", AiErrorCodes.Invalid);
     }
 
     private static async Task<AiSite> SiteAsync(IAiDbContext db, CancellationToken ct)
@@ -353,7 +463,10 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     private static AiConnectionInfo Info(AiConnection c) => Info(StoredAiConnections.Describe(c));
 
     private static AiConnectionInfo Info(AiConnectionDescriptor c) => new(c.Id, c.ScopeId, c.Name, c.Provider, c.Endpoint, c.HasKey, c.Models, c.DataClasses,
-        c.Labels, c.Settings, c.InputPrice, c.OutputPrice, c.ModelPrices, c.StructuredOutput, c.Enabled);
+        c.Labels, c.Settings, c.InputPrice, c.OutputPrice, c.ModelPrices, c.StructuredOutput, c.Enabled)
+    {
+        ModelSettings = c.ModelSettings,
+    };
 
     private static AiAliasInfo Info(AiAlias a) => new(a.Id, a.ScopeId, a.Name, a.Targets, a.UpdatedAt);
 

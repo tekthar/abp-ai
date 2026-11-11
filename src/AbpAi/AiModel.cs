@@ -61,6 +61,7 @@ public static class AiModel
             b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
             b.Property(x => x.Endpoint).HasMaxLength(500).IsRequired();
             b.Property(x => x.Models).HasJsonConversion();
+            b.Property(x => x.ModelSettings).HasJsonConversion().HasDefaultValueSql("'{}'::jsonb");
             b.Property(x => x.DataClasses).HasJsonConversion();
             b.Property(x => x.Labels).HasJsonConversion();
             b.Property(x => x.Settings).HasJsonConversion();

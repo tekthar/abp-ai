@@ -123,7 +123,18 @@ public sealed record AiStreamEvent(string Type, JsonElement Data)
 
 /// <summary>
 /// Where an alias leads: the model, the provider and connection (never its key), where the alias was set (<c>scope</c>,
-/// <c>site</c>, or <c>model</c> when it was a model's name), and what the connection may receive.
+/// <c>site</c>, or <c>model</c> when it was a model's name), what the model can do, and what the connection may receive.
 /// </summary>
+/// <param name="Model">The provider's id for the model.</param>
 public sealed record AiChoice(string Alias, string Model, string Provider, Guid ConnectionId, string Connection, string Source, Guid? SetOnScopeId,
-    bool StructuredOutput, IReadOnlyList<string> DataClasses, IReadOnlyList<string> Labels);
+    bool StructuredOutput, IReadOnlyList<string> DataClasses, IReadOnlyList<string> Labels)
+{
+    /// <summary>What people and aliases call the model; its id unless an admin named it.</summary>
+    public string ModelName { get; init; } = Model;
+
+    /// <summary>The model takes tools.</summary>
+    public bool Tools { get; init; } = true;
+
+    /// <summary>The model takes images.</summary>
+    public bool Images { get; init; } = true;
+}

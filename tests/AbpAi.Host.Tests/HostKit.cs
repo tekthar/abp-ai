@@ -12,7 +12,8 @@ public static class HostCollection
 }
 
 /// <summary>
-/// A host's own provider, of a kind with the host's prefix (<c>acme:bedrock</c>): answers in words and keeps each call.
+/// A host's own provider, of a kind with the host's prefix (<c>acme:bedrock</c>): answers in words, keeps each call, and lists
+/// two models when it has a key.
 /// </summary>
 public sealed class AcmeProvider : IAiProvider
 {
@@ -32,4 +33,7 @@ public sealed class AcmeProvider : IAiProvider
     }
 
     public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<string>?>(target.ApiKey is null ? null : ["acme-large", "acme-small"]);
 }

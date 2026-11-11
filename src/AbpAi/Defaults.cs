@@ -54,6 +54,7 @@ public class StoredAiConnections(AiDb aiDb, IStringEncryptionService encryption)
         Endpoint = c.Endpoint,
         Settings = c.Settings,
         Models = c.Models,
+        ModelSettings = c.ModelSettings,
         DataClasses = c.DataClasses,
         Labels = c.Labels,
         InputPrice = c.InputPrice,

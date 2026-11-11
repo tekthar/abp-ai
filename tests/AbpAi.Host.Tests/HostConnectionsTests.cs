@@ -114,6 +114,11 @@ public sealed class HostConnectionsTests : IAsyncLifetime
             Assert.Equal(AiErrorCodes.HostConnections, (await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(setting)).Code);
         }
 
+        // The host finds its connections' models with the gateway's providers; it adds them where it keeps its connections.
+        Assert.Equal(["acme-large", "acme-small"], await admin.ProviderModelsAsync(SiteAdmin, null, _bedrock.Id, default));
+        Assert.Equal(AiErrorCodes.HostConnections, (await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() =>
+            admin.DiscoverModelsAsync(SiteAdmin, _bedrock.Id, default))).Code);
+
         // A scope's own connection serves its scopes only while the site lets scopes connect, as AbpAi's own do.
         Assert.Equal(AiRefusalCodes.NoModel, (await Assert.ThrowsAsync<AiRefusedException>(() => Get<IAi>().ResolveAsync("fin-model", Budget, AiDataClasses.Internal))).Code);
         await admin.SetSiteAsync(SiteAdmin, new AiSiteSettings(true, false, 30, [AiDataClasses.Public, AiDataClasses.Internal], []), default);

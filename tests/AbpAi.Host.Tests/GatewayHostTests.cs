@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AbpAi.Agents;
+using AbpAi.Providers;
 using AbpAi.SampleHost;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -447,6 +448,103 @@ public sealed class GatewayHostTests : IAsyncLifetime
         {
             ProviderOptions = JsonSerializer.SerializeToElement(new[] { 1 }),
         }));
+    }
+
+    // Models with what they can do -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_connections_models_are_called_by_their_names_skipped_when_off_and_chosen_for_what_they_can_do()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        AiScript script = Get<AiScript>();
+        script.Clear();
+        AiConnectionInput input = new("multi", "demo", ["m-text", "m-vision", "m-off"], [.. AiDataClasses.Default])
+        {
+            OutputPrice = 1000,
+            ModelSettings = new Dictionary<string, AiModelSettings>
+            {
+                ["m-text"] = new() { Name = "text", Tools = false, ContextTokens = 8000 },
+                ["m-vision"] = new() { Name = "vision", Images = true, StructuredOutput = true },
+                ["m-off"] = new() { Enabled = false },
+            },
+        };
+        AiConnectionInfo multi = await admin.CreateConnectionAsync(SiteAdmin, null, input, default);
+        IAi ai = Get<IAi>();
+
+        AiChoice text = await ai.ResolveAsync("text", Budget, AiDataClasses.Rows);
+        Assert.Equal(("m-text", "text", false, false, "model"), (text.Model, text.ModelName, text.Tools, text.Images, text.Source));
+        Assert.Equal("m-text", (await ai.ResolveAsync("m-text", Budget, AiDataClasses.Rows)).Model);
+        Assert.Equal(AiRefusalCodes.NoModel, (await Assert.ThrowsAsync<AiRefusedException>(() => ai.ResolveAsync("m-off", Budget, AiDataClasses.Rows))).Code);
+
+        // An alias's targets by name are kept by id; a call goes to the first that can do what it needs.
+        AiAliasInfo alias = await admin.SetAliasAsync(SiteAdmin, null, "multi", [new AiAliasTarget(multi.Id, "text"), new AiAliasTarget(multi.Id, "vision")], default);
+        Assert.Equal(["m-text", "m-vision"], alias.Targets.Select(t => t.Model));
+        JsonElement tools = JsonSerializer.SerializeToElement(new[] { new { name = "run_query", input_schema = new { type = "object" } } });
+        JsonElement image = JsonSerializer.SerializeToElement(new[]
+        {
+            new { role = "user", content = new object[] { new { type = "image", source = new { type = "base64", media_type = "image/png", data = "AA==" } } } },
+        });
+        await Call(AiRequest.Text("multi", "Plain words."));
+        await Call(AiRequest.Text("multi", "With tools.") with { Tools = tools });
+        await Call(new AiRequest("multi", image));
+        await Call(AiRequest.Text("multi", "Shaped.") with { OutputSchema = JsonSerializer.SerializeToElement(new { type = "object" }) });
+        Assert.Equal(["m-text", "m-vision", "m-vision", "m-vision"], script.Calls.Select(c => c.Target.Model));
+
+        // When no target can, the call is refused before it leaves.
+        await admin.SetAliasAsync(SiteAdmin, null, "multi", [new AiAliasTarget(multi.Id, "text")], default);
+        AiRefusedException refused = await Assert.ThrowsAsync<AiRefusedException>(() => Call(AiRequest.Text("multi", "With tools.") with { Tools = tools }));
+        Assert.Equal(AiRefusalCodes.NoModel, refused.Code);
+        Assert.Contains("takes tools", refused.Message);
+
+        // A model with no settings takes everything: an image still goes to public-cloud, first of "smart".
+        Assert.Equal("public-cloud", (await Call(new AiRequest("smart", image) { DataClass = AiDataClasses.Public })).Connection);
+
+        // Changing the connection without settings keeps them, for the models it still offers.
+        AiConnectionInfo changed = await admin.UpdateConnectionAsync(SiteAdmin, multi.Id, input with { Models = ["m-text", "m-vision"], ModelSettings = null }, default);
+        Assert.Equal(["m-text", "m-vision"], changed.ModelSettings.Keys.Order());
+        Assert.Equal(8000, changed.ModelSettings["m-text"].ContextTokens);
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.UpdateConnectionAsync(SiteAdmin, multi.Id, input with
+        {
+            ModelSettings = new Dictionary<string, AiModelSettings> { ["m-text"] = new() { Name = "m-vision" } },
+        }, default));
+
+        // A model's price changing says when: the connection's prices were set when it was made, then one model's.
+        DateTime made = changed.ModelSettings["m-text"].PriceSetAt!.Value;
+        Assert.Equal(made, changed.ModelSettings["m-vision"].PriceSetAt);
+        AiConnectionInfo priced = await admin.UpdateConnectionAsync(SiteAdmin, multi.Id, input with
+        {
+            ModelSettings = null, ModelPrices = new Dictionary<string, AiPrice> { ["m-vision"] = new(3, 15) },
+        }, default);
+        Assert.True(priced.ModelSettings["m-vision"].PriceSetAt > made);
+        Assert.Equal(made, priced.ModelSettings["m-text"].PriceSetAt);
+
+        Task<AiReply> Call(AiRequest request) => ai.CompleteAsync(request with { ScopeId = Budget, AccountId = Ben, DataClass = request.DataClass ?? AiDataClasses.Rows, MaxTokens = 20 });
+    }
+
+    [Fact]
+    public async Task Discovery_adds_the_models_a_provider_offers_each_off_until_an_admin_turns_it_on()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        AiConnectionInput input = new("found", "demo", ["seed"], [.. AiDataClasses.Default]);
+        AiConnectionInfo found = await admin.CreateConnectionAsync(SiteAdmin, null, input, default);
+        Assert.Equal([DemoProvider.ModelId], await admin.ProviderModelsAsync(SiteAdmin, null, found.Id, default));
+
+        AiConnectionInfo discovered = await admin.DiscoverModelsAsync(SiteAdmin, found.Id, default);
+        Assert.Equal(["seed", DemoProvider.ModelId], discovered.Models);
+        Assert.False(discovered.ModelSettings[DemoProvider.ModelId].Enabled);
+        Assert.False(discovered.ModelSettings.ContainsKey("seed"));
+        Assert.Equal(["seed", DemoProvider.ModelId], (await admin.DiscoverModelsAsync(SiteAdmin, found.Id, default)).Models);
+        AiRefusedException off = await Assert.ThrowsAsync<AiRefusedException>(() => Get<IAi>().ResolveAsync(DemoProvider.ModelId, Budget, AiDataClasses.Rows));
+        Assert.Equal(AiRefusalCodes.NoModel, off.Code);
+
+        await admin.UpdateConnectionAsync(SiteAdmin, found.Id, input with
+        {
+            Models = discovered.Models, ModelSettings = new Dictionary<string, AiModelSettings> { [DemoProvider.ModelId] = new() { Enabled = true } },
+        }, default);
+        Assert.Equal("found", (await Get<IAi>().ResolveAsync(DemoProvider.ModelId, Budget, AiDataClasses.Rows)).Connection);
+
+        // Only the site's admins find the site's models.
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.DiscoverModelsAsync(FinanceAdmin, found.Id, default));
     }
 
     [Fact]
