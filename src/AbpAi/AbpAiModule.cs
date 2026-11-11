@@ -16,7 +16,7 @@ namespace AbpAi;
 [DependsOn(typeof(Volo.Abp.EntityFrameworkCore.PostgreSql.AbpEntityFrameworkCorePostgreSqlModule), typeof(AbpSecurityModule))]
 public class AbpAiModule : AbpModule
 {
-    public const string Version = "0.1.0";
+    public const string Version = "0.3.0";
 
     public override void ConfigureServices(ServiceConfigurationContext context)
     {

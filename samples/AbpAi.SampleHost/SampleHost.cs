@@ -30,6 +30,7 @@ public class SampleHostModule : AbpModule
         {
             options.Map(AiErrorCodes.Forbidden, HttpStatusCode.Forbidden);
             options.Map(AiErrorCodes.Invalid, HttpStatusCode.BadRequest);
+            options.Map(AiErrorCodes.HostConnections, HttpStatusCode.Conflict);
         });
     }
 

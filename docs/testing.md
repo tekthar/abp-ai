@@ -16,7 +16,17 @@ script.OnText("churned", "Three customers churned.");         // calls whose las
 script.OnPurpose("agent:ask", c => AiMessages.AssistantToolUse("run_query", new { sql = "select 1" }), once: true);
 ```
 
-`script.Calls` is every call the demo model was asked, so a test can check what was sent, and where.
+`script.Calls` is every call the demo model was asked, so a test can check what was sent, and where. Each is the
+`AiProviderCall` a provider gets, with the whole request as `Request` (its purpose, account, the person it's for, scope,
+what it's about, tools and data class, and its `MaxTokens` after the limits that cap a reply), so a responder of your
+own can answer by any of them:
+
+```csharp
+script.On(c => c.Request?.About?.Kind == "record" && c.Tools is not null, c => AiMessages.AssistantToolUse("read_record", new { id = c.Request!.About!.Id }));
+```
+
+Asked which models it offers (`DiscoverModelsAsync`), the demo model lists one, `demo`; a demo connection may name its
+models as it likes.
 
 ## A question set from a file
 

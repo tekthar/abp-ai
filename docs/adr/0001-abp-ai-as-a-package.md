@@ -80,8 +80,9 @@ was written.
 
 - **HTTP controllers in the package.** The admin and usage services are the API; a host maps them to its own routes
   and shapes, as the sample does. A package of controllers can come when a second host wants the same routes.
-- **Prompt caching and token counting by the provider.** The estimate is by characters; the settled cost is the
-  provider's count.
+- **Token counting by the provider, and cache prices.** The estimate is by characters; the settled cost is the
+  provider's count. A call may mark what a provider may cache (system blocks with `cache_control`, from 0.3.0), and
+  the gateway passes it on, but prices cached tokens as any other.
 - **Per-label rules** ("only `on-premises` for `sensitive`"). Labels are for people to read today; the class list is
   the rule.
 
@@ -95,6 +96,7 @@ was written.
 | AI2 | Per person: a default, account and group overrides, alongside totals; the refusal names the limit and when it frees | Done here |
 | AI5 | `AiScript` and the demo model in the package; a question set run through `AbpAi.Agents` in CI | Done here; AbpAgent's own eval harness (A8) to use it |
 | AI4 | Usage by scope, person, purpose, model; export; a person's own | Done here |
+| AI6 | What that product's move needs of the gateway (0.3.0): system blocks and provider options; models' settings and discovery; which site models a scope may use; limits on tokens and calls, per minute, and per reply; connections the host keeps (`IAiConnectionSource`) | Done here |
 | Move | The product the gateway came from runs on AbpAi with no change to its calls, aliases, limits or usage history | To do, in that product |
 
 ## Consequences
