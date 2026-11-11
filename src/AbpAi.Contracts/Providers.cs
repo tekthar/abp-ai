@@ -13,6 +13,22 @@ public sealed record AiProviderCall(AiTarget Target, JsonElement Messages, strin
     public string Purpose { get; init; } = "";
 
     public Guid? ScopeId { get; init; }
+
+    /// <summary>The system prompt as the Messages API's blocks, when the call gave them; they win over <see cref="System"/>.</summary>
+    public JsonElement? SystemBlocks { get; init; }
+
+    /// <summary>More of the provider's request (<see cref="AiRequest.ProviderOptions"/>): a JSON object, or null.</summary>
+    public JsonElement? ProviderOptions { get; init; }
+
+    /// <summary>
+    /// The call as it was asked, with its <c>MaxTokens</c> after the limits that cap a reply: its purpose, account, scope,
+    /// what it's about and its tools, for the demo model's responders and a host's own providers. Null for a call made by
+    /// hand.
+    /// </summary>
+    public AiRequest? Request { get; init; }
+
+    /// <summary>The system text: the blocks' text, joined, when there are blocks; else <see cref="System"/>.</summary>
+    public string? SystemText => AiMessages.SystemText(System, SystemBlocks);
 }
 
 /// <summary>A provider's reply: the assistant message in the Messages API's shape, and the tokens it counted.</summary>

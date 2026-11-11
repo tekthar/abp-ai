@@ -36,6 +36,19 @@ public sealed record AiRequest(string Alias, JsonElement Messages)
     /// <summary>The system text.</summary>
     public string? System { get; init; }
 
+    /// <summary>
+    /// The system prompt as the Messages API's blocks (<c>[{ type: "text", text, cache_control }]</c>), for a call that marks
+    /// what a provider may cache; a string is taken as the text. When set it wins over <see cref="System"/>.
+    /// </summary>
+    public JsonElement? SystemBlocks { get; init; }
+
+    /// <summary>
+    /// More of the provider's request, as a JSON object: keys the gateway doesn't set itself (<c>thinking</c>,
+    /// <c>temperature</c>, <c>tool_choice</c>) go into the request body as they are. The gateway's own (the model, the
+    /// messages, the system prompt, the tools, the most tokens, streaming) are never taken from here.
+    /// </summary>
+    public JsonElement? ProviderOptions { get; init; }
+
     /// <summary>The tools: <c>[{ name, description, input_schema }]</c>, or null.</summary>
     public JsonElement? Tools { get; init; }
 

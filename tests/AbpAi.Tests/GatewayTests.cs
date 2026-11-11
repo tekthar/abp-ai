@@ -63,6 +63,66 @@ public class GatewayTests
     }
 
     [Fact]
+    public void System_blocks_go_to_Anthropic_as_they_are_and_provider_options_fill_in_what_the_gateway_doesnt_set()
+    {
+        JsonElement blocks = Json("""[{"type":"text","text":"You know the schema.","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Be brief."}]""");
+        JsonElement options = Json("""
+            {"thinking":{"type":"enabled","budget_tokens":2000},"temperature":0.2,"model":"other","max_tokens":99999,"stream":true,"system":"no","tools":[],
+             "output_config":{"effort":"low","format":{"type":"text"}}}
+            """);
+        AiProviderCall call = Call(AiMessages.User("Totals?"), system: "Ignored: the blocks win.", schema: Json("""{"type":"object"}""")) with
+        {
+            SystemBlocks = blocks, ProviderOptions = options,
+        };
+        JsonObject body = AnthropicProvider.Body(call, stream: false);
+
+        Assert.Equal(2, body["system"]!.AsArray().Count);
+        Assert.Equal("ephemeral", body["system"]![0]!["cache_control"]!["type"]!.GetValue<string>());
+        Assert.Equal(2000, body["thinking"]!["budget_tokens"]!.GetValue<int>());
+        Assert.Equal(0.2, body["temperature"]!.GetValue<double>());
+        // The gateway's own keys stay its own, and what it set inside output_config wins over the options'.
+        Assert.Equal(("claude-opus-5-5", 100), (body["model"]!.GetValue<string>(), body["max_tokens"]!.GetValue<int>()));
+        Assert.False(body.ContainsKey("stream"));
+        Assert.False(body.ContainsKey("tools"));
+        Assert.Equal("json_schema", body["output_config"]!["format"]!["type"]!.GetValue<string>());
+        Assert.Equal("low", body["output_config"]!["effort"]!.GetValue<string>());
+        Assert.Equal("You know the schema.\n\nBe brief.", call.SystemText);
+
+        // A string in place of blocks is the system text.
+        Assert.Equal("Plain.", AnthropicProvider.Body(Call(AiMessages.User("Hi")) with { SystemBlocks = Json("\"Plain.\"") }, stream: false)["system"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Chat_completions_get_the_system_blocks_text_and_the_options_in_their_own_shape()
+    {
+        JsonElement tools = Json("""[{"name":"run_query","input_schema":{"type":"object"}}]""");
+        JsonElement options = Json("""
+            {"temperature":0.5,"tool_choice":{"type":"any"},"stop_sequences":["END"],"thinking":{"type":"enabled","budget_tokens":100},"max_completion_tokens":5,
+             "reasoning_effort":"low"}
+            """);
+        AiProviderCall call = Call(AiMessages.User("Count"), tools: tools) with
+        {
+            SystemBlocks = Json("""[{"type":"text","text":"One."},{"type":"text","text":"Two.","cache_control":{"type":"ephemeral"}}]"""),
+            ProviderOptions = options,
+        };
+        JsonObject body = OpenAiCompatibleProvider.Body(call, stream: false);
+
+        Assert.Equal(("system", "One.\n\nTwo."), (body["messages"]![0]!["role"]!.GetValue<string>(), body["messages"]![0]!["content"]!.GetValue<string>()));
+        Assert.Equal(0.5, body["temperature"]!.GetValue<double>());
+        Assert.Equal("required", body["tool_choice"]!.GetValue<string>());
+        Assert.Equal("END", body["stop"]![0]!.GetValue<string>());
+        Assert.Equal("low", body["reasoning_effort"]!.GetValue<string>());
+        Assert.False(body.ContainsKey("thinking"));
+        Assert.False(body.ContainsKey("max_completion_tokens"));
+        Assert.Equal(100, body["max_tokens"]!.GetValue<int>());
+
+        // A tool by name, and no tool_choice at all when the call has no tools.
+        JsonObject named = OpenAiCompatibleProvider.Body(call with { ProviderOptions = Json("""{"tool_choice":{"type":"tool","name":"run_query"}}""") }, stream: false);
+        Assert.Equal("run_query", named["tool_choice"]!["function"]!["name"]!.GetValue<string>());
+        Assert.False(OpenAiCompatibleProvider.Body(call with { Tools = null }, stream: false).ContainsKey("tool_choice"));
+    }
+
+    [Fact]
     public void A_conversation_with_tools_is_translated_to_chat_completions_and_back()
     {
         JsonElement messages = Json("""

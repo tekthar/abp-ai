@@ -18,7 +18,7 @@ public sealed class DemoProvider(IEnumerable<IAiDemoResponder> responders, IOpti
     {
         JsonElement message = await ReplyAsync(call, cancellationToken);
         int perToken = Math.Max(1, options.Value.CharsPerToken);
-        int input = (call.Messages.GetRawText().Length + (call.System?.Length ?? 0) + (call.Tools?.GetRawText().Length ?? 0)) / perToken + 1;
+        int input = (call.Messages.GetRawText().Length + AiService.SystemChars(call.System, call.SystemBlocks) + (call.Tools?.GetRawText().Length ?? 0)) / perToken + 1;
         int output = Math.Min(call.MaxTokens, message.GetRawText().Length / perToken + 1);
         return new AiProviderReply(message, input, output);
     }

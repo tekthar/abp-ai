@@ -11,7 +11,8 @@ namespace AbpAi.Providers;
 /// translated to it and back, tool calls and stream events too. The endpoint is the API's base
 /// (<c>https://api.openai.com/v1</c>, <c>http://localhost:11434/v1</c>). Settings: <c>api-version</c> (Azure; added to
 /// the address), <c>auth</c> = <c>api-key</c> (Azure's header) or <c>bearer</c> (the default), and
-/// <c>max-tokens-field</c> (<c>max_completion_tokens</c> for models that want it).
+/// <c>max-tokens-field</c> (<c>max_completion_tokens</c> for models that want it). System blocks are joined into the
+/// system message; the call's provider options go into the request (<see cref="Translated"/>).
 /// </summary>
 public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : IAiProvider
 {
@@ -104,9 +105,9 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
     internal static JsonObject Body(AiProviderCall call, bool stream)
     {
         JsonArray messages = [];
-        if (!string.IsNullOrEmpty(call.System))
+        if (call.SystemText is { Length: > 0 } system)
         {
-            messages.Add(new JsonObject { ["role"] = "system", ["content"] = call.System });
+            messages.Add(new JsonObject { ["role"] = "system", ["content"] = system });
         }
 
         foreach (JsonElement message in call.Messages.EnumerateArray())
@@ -231,7 +232,57 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
             body["stream_options"] = new JsonObject { ["include_usage"] = true };
         }
 
+        ProviderOptions.MergeInto(body, Translated(call.ProviderOptions, body.ContainsKey("tools")), Reserved);
         return body;
+    }
+
+    /// <summary>The keys the gateway sets itself, never taken from a call's provider options.</summary>
+    private static readonly string[] Reserved = ["model", "messages", "system", "tools", "stream", "stream_options", "max_tokens", "max_completion_tokens"];
+
+    /// <summary>
+    /// A call's provider options for Chat Completions: the Messages API's <c>tool_choice</c> in its shape (and only with
+    /// tools), <c>stop_sequences</c> as <c>stop</c>, and <c>thinking</c> and <c>output_config</c>, which it has no key for,
+    /// left out. The rest go as they are.
+    /// </summary>
+    internal static JsonElement? Translated(JsonElement? options, bool hasTools)
+    {
+        if (options is not { ValueKind: JsonValueKind.Object } given)
+        {
+            return null;
+        }
+
+        JsonObject translated = JsonNode.Parse(given.GetRawText())!.AsObject();
+        translated.Remove("thinking");
+        translated.Remove("output_config");
+        if (translated["stop_sequences"] is { } stops)
+        {
+            translated.Remove("stop_sequences");
+            if (!translated.ContainsKey("stop"))
+            {
+                translated["stop"] = stops;
+            }
+        }
+
+        if (translated["tool_choice"] is { } choice)
+        {
+            translated.Remove("tool_choice");
+            JsonNode? chat = choice is JsonObject messagesShape
+                ? (string?)messagesShape["type"] switch
+                {
+                    "any" => "required",
+                    "none" => "none",
+                    "tool" => new JsonObject { ["type"] = "function", ["function"] = new JsonObject { ["name"] = (string?)messagesShape["name"] } },
+                    "auto" => "auto",
+                    _ => messagesShape.DeepClone(),
+                }
+                : choice;
+            if (hasTools)
+            {
+                translated["tool_choice"] = chat;
+            }
+        }
+
+        return JsonSerializer.SerializeToElement(translated);
     }
 
     /// <summary>A Chat Completions reply in the Messages API's shape.</summary>

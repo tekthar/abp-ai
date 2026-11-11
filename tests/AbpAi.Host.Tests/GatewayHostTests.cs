@@ -407,6 +407,42 @@ public sealed class GatewayHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task System_blocks_and_provider_options_reach_the_provider_and_the_demo_model_sees_the_whole_call()
+    {
+        AiScript script = Get<AiScript>();
+        script.Clear();
+        await Get<AiAdminService>().SetSiteAsync(SiteAdmin, new AiSiteSettings(false, true, 7, [], []), default);
+        JsonElement blocks = JsonSerializer.SerializeToElement(new object[]
+        {
+            new { type = "text", text = new string('s', 4000), cache_control = new { type = "ephemeral" } },
+            new { type = "text", text = "Answer in one line." },
+        });
+        AiReply reply = await Get<IAi>().CompleteAsync(new AiRequest("smart", AiMessages.User("Totals by region, please."))
+        {
+            ScopeId = Budget, AccountId = Ben, DataClass = AiDataClasses.Aggregates, MaxTokens = 20, Purpose = "ask", About = new AiSubject("record", "R-7"),
+            System = "Not this: the blocks win.", SystemBlocks = blocks, ProviderOptions = JsonSerializer.SerializeToElement(new { temperature = 0 }),
+            Tools = JsonSerializer.SerializeToElement(new[] { new { name = "run_query", input_schema = new { type = "object" } } }),
+        });
+
+        AiProviderCall sent = Assert.Single(script.Calls);
+        Assert.Equal(blocks.GetRawText(), sent.SystemBlocks!.Value.GetRawText());
+        Assert.EndsWith("Answer in one line.", sent.SystemText);
+        Assert.Equal(0, sent.ProviderOptions!.Value.GetProperty("temperature").GetInt32());
+        Assert.Equal((Ben, "R-7", (Guid?)Budget, "ask"), (sent.Request!.AccountId!.Value, sent.Request.About!.Id, sent.Request.ScopeId, sent.Request.Purpose));
+        Assert.Equal(1, sent.Request.Tools!.Value.GetArrayLength());
+
+        // The blocks count as the call's input, and they are what's kept as its system prompt.
+        AiUsageRecord record = await Db(db => db.AiUsage.SingleAsync(r => r.Id == reply.UsageId));
+        Assert.True(record.InputTokens > 1000, $"{record.InputTokens} tokens in.");
+        Assert.Contains("ephemeral", await Db(db => db.AiPrompts.Where(p => p.Id == reply.UsageId).Select(p => p.System).SingleAsync()));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => Get<IAi>().CompleteAsync(AiRequest.Text("smart", "Hi") with
+        {
+            ProviderOptions = JsonSerializer.SerializeToElement(new[] { 1 }),
+        }));
+    }
+
+    [Fact]
     public async Task The_api_answers_a_refusal_with_its_code_and_the_limit()
     {
         HttpClient http = _factory!.CreateClient();

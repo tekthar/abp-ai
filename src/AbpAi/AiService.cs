@@ -118,6 +118,16 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
             throw new ArgumentException("A call's MaxTokens is more than nothing.", nameof(request));
         }
 
+        if (request.SystemBlocks is { ValueKind: not (JsonValueKind.Array or JsonValueKind.String or JsonValueKind.Null or JsonValueKind.Undefined) })
+        {
+            throw new ArgumentException("A call's SystemBlocks are a JSON array of the Messages API's blocks, or a string.", nameof(request));
+        }
+
+        if (request.ProviderOptions is { ValueKind: not (JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined) })
+        {
+            throw new ArgumentException("A call's ProviderOptions are a JSON object.", nameof(request));
+        }
+
         AiScopeChain chain = await chains.OfAsync(request.ScopeId, ct);
         string dataClass = router.ClassOf(request.DataClass);
         AiRoute route = await router.ChooseAsync(request.Alias, chain, dataClass, request.OutputSchema is not null, ct);
@@ -130,6 +140,9 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
         {
             Purpose = request.Purpose,
             ScopeId = request.ScopeId,
+            SystemBlocks = Given(request.SystemBlocks),
+            ProviderOptions = Given(request.ProviderOptions),
+            Request = request,
         };
         return (new AiCall(request, chain, route, dataClass, Estimate(request, route), streamed), provider, providerCall);
     }
@@ -138,10 +151,16 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
     private decimal Estimate(AiRequest request, AiRoute route)
     {
         int perToken = Math.Max(1, options.Value.CharsPerToken);
-        long chars = request.Messages.GetRawText().Length + (request.System?.Length ?? 0) + (request.Tools?.GetRawText().Length ?? 0)
+        long chars = request.Messages.GetRawText().Length + SystemChars(request.System, request.SystemBlocks) + (request.Tools?.GetRawText().Length ?? 0)
             + (request.OutputSchema?.GetRawText().Length ?? 0);
         return Cost(route, (int)Math.Min(int.MaxValue, chars / perToken + 1), request.MaxTokens);
     }
+
+    /// <summary>The length of a call's system prompt: its blocks as JSON when it gives them, else its text.</summary>
+    internal static int SystemChars(string? system, JsonElement? blocks) => Given(blocks) is { } given ? given.GetRawText().Length : system?.Length ?? 0;
+
+    /// <summary>A JSON value the call gave, or null for JSON's null or none.</summary>
+    private static JsonElement? Given(JsonElement? value) => value is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } given ? given : null;
 
     private static decimal Cost(AiRoute route, int input, int output)
     {
@@ -165,7 +184,8 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
             {
                 if (await db.AiSites.AsNoTracking().AnyAsync(s => s.Id == AiSite.TheId && s.KeepPrompts))
                 {
-                    db.AiPrompts.Add(new AiPromptRecord(usageId, call.Request.System, call.Request.Messages.GetRawText(), reply.GetRawText()));
+                    string? system = Given(call.Request.SystemBlocks) is { } blocks ? blocks.GetRawText() : call.Request.System;
+                    db.AiPrompts.Add(new AiPromptRecord(usageId, system, call.Request.Messages.GetRawText(), reply.GetRawText()));
                     await db.SaveChangesAsync();
                 }
             }, requiresNew: true);

@@ -7,9 +7,10 @@ using System.Text.Json.Nodes;
 namespace AbpAi.Providers;
 
 /// <summary>
-/// Anthropic's Messages API, which is the gateway's own shape: the request goes as it is, and the reply and stream
-/// events come back as they are. Settings: <c>anthropic-version</c> (default 2026-10-21), <c>anthropic-beta</c>, and
-/// <c>auth</c> = <c>bearer</c> for a gateway that takes the key as a bearer token.
+/// Anthropic's Messages API, which is the gateway's own shape: the request goes as it is (system blocks as they are, and
+/// the call's provider options merged in), and the reply and stream events come back as they are. Settings:
+/// <c>anthropic-version</c> (default 2026-10-21), <c>anthropic-beta</c>, and <c>auth</c> = <c>bearer</c> for a gateway
+/// that takes the key as a bearer token.
 /// </summary>
 public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvider
 {
@@ -81,9 +82,16 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
             ["max_tokens"] = call.MaxTokens,
             ["messages"] = JsonNode.Parse(call.Messages.GetRawText()),
         };
-        if (!string.IsNullOrEmpty(call.System))
+        if (call.SystemBlocks is { ValueKind: JsonValueKind.Array } blocks)
         {
-            body["system"] = call.System;
+            if (blocks.GetArrayLength() > 0)
+            {
+                body["system"] = JsonNode.Parse(blocks.GetRawText());
+            }
+        }
+        else if (call.SystemText is { Length: > 0 } system)
+        {
+            body["system"] = system;
         }
 
         if (call.Tools is { ValueKind: JsonValueKind.Array } tools && tools.GetArrayLength() > 0)
@@ -101,8 +109,12 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
             body["stream"] = true;
         }
 
+        ProviderOptions.MergeInto(body, call.ProviderOptions, Reserved);
         return body;
     }
+
+    /// <summary>The keys the gateway sets itself, never taken from a call's provider options.</summary>
+    private static readonly string[] Reserved = ["model", "messages", "max_tokens", "system", "tools", "stream"];
 
     private static HttpRequestMessage Request(AiProviderCall call, bool stream)
     {

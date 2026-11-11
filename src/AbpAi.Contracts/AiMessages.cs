@@ -60,6 +60,27 @@ public static class AiMessages
     }
 
     /// <summary>
+    /// A call's system text: the text of its system blocks (a string, or the Messages API's blocks), joined by a blank line,
+    /// when it has blocks; else its system text. Null when it has neither.
+    /// </summary>
+    public static string? SystemText(string? system, JsonElement? blocks)
+    {
+        if (blocks is { ValueKind: JsonValueKind.String } text)
+        {
+            return text.GetString();
+        }
+
+        if (blocks is not { ValueKind: JsonValueKind.Array } array)
+        {
+            return system;
+        }
+
+        return string.Join("\n\n", array.EnumerateArray()
+            .Where(b => b.ValueKind == JsonValueKind.Object && b.TryGetProperty("text", out JsonElement t) && t.ValueKind == JsonValueKind.String)
+            .Select(b => b.GetProperty("text").GetString()));
+    }
+
+    /// <summary>
     /// The text of the conversation's last user message that has text (one holding only tool results is passed over),
     /// for responders that look at what was asked.
     /// </summary>
