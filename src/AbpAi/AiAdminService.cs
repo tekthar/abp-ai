@@ -39,10 +39,12 @@ public sealed record AiLimitInfo(Guid Id, Guid? ScopeId, string Kind, string Per
 /// <summary>
 /// The admin API: the site's settings, and connections, aliases and limits on the site or a scope. The site's admins
 /// set anything; a scope's admins set their scope's and those of the scopes under it, connections only while the site
-/// lets scopes connect, and only with the data classes the site lets scopes' connections receive.
+/// lets scopes connect, and only with the data classes the site lets scopes' connections receive. When the host keeps
+/// the connections (its own <see cref="IAiConnectionSource"/>), connections are listed from it and set where it keeps
+/// them: creating, changing or deleting one here is refused with <see cref="AiErrorCodes.HostConnections"/>.
 /// </summary>
 public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains chains, AiDataRules rules, IEnumerable<IAiProvider> providers,
-    IStringEncryptionService encryption) : ITransientDependency
+    IStringEncryptionService encryption, IAiConnectionSource source) : ITransientDependency
 {
     /// <summary>The classes a scope's connections may list when the site hasn't said: nothing of the organization's data.</summary>
     public static readonly IReadOnlyList<string> DefaultScopeDataClasses = [AiDataClasses.Public, AiDataClasses.Internal];
@@ -76,16 +78,20 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }, cancellationToken: ct);
     }
 
+    /// <summary>Whether AbpAi keeps the connections itself (its own table), so they're set here.</summary>
+    public bool KeepsConnections => source is StoredAiConnections;
+
+    /// <summary>The connections set on the site or a scope, from wherever they're kept.</summary>
     public async Task<List<AiConnectionInfo>> ListConnectionsAsync(AiActor actor, Guid? scopeId, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
-        List<AiConnection> found = await aiDb.RunAsync(db => db.AiConnections.AsNoTracking().Where(c => c.ScopeId == scopeId).OrderBy(c => c.Name).ToListAsync(ct),
-            cancellationToken: ct);
-        return [.. found.Select(Info)];
+        IReadOnlyList<AiConnectionDescriptor> found = await source.ListAsync(scopeId is { } scope ? [scope] : [], ct);
+        return [.. found.Where(c => c.ScopeId == scopeId).OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).Select(Info)];
     }
 
     public async Task<AiConnectionInfo> CreateConnectionAsync(AiActor actor, Guid? scopeId, AiConnectionInput input, CancellationToken ct)
     {
+        KeptHere();
         await AdminAsync(actor, scopeId, ct);
         return await aiDb.RunAsync(async db =>
         {
@@ -105,6 +111,7 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
     public async Task<AiConnectionInfo> UpdateConnectionAsync(AiActor actor, Guid id, AiConnectionInput input, CancellationToken ct)
     {
+        KeptHere();
         AiConnection existing = await aiDb.RunAsync(db => db.AiConnections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct), cancellationToken: ct)
             ?? throw new EntityNotFoundException(typeof(AiConnection), id);
         await AdminAsync(actor, existing.ScopeId, ct);
@@ -122,6 +129,7 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
     public async Task DeleteConnectionAsync(AiActor actor, Guid id, CancellationToken ct)
     {
+        KeptHere();
         AiConnection existing = await aiDb.RunAsync(db => db.AiConnections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct), cancellationToken: ct)
             ?? throw new EntityNotFoundException(typeof(AiConnection), id);
         await AdminAsync(actor, existing.ScopeId, ct);
@@ -147,24 +155,23 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }
 
         AiScopeChain chain = await chains.OfAsync(scopeId, ct);
-        return await aiDb.RunAsync(async db =>
+        IReadOnlyList<AiConnectionDescriptor> connections = await source.ListAsync([.. chain.Up], ct);
+        foreach (AiAliasTarget target in targets)
         {
-            List<Guid> ids = [.. targets.Select(t => t.ConnectionId).Distinct()];
-            List<AiConnection> connections = await db.AiConnections.AsNoTracking().Where(c => ids.Contains(c.Id)).ToListAsync(ct);
-            foreach (AiAliasTarget target in targets)
+            AiConnectionDescriptor? connection = connections.FirstOrDefault(c => c.Id == target.ConnectionId);
+            if (connection is null || !chain.Sees(connection.ScopeId))
             {
-                AiConnection? connection = connections.FirstOrDefault(c => c.Id == target.ConnectionId);
-                if (connection is null || !chain.Sees(connection.ScopeId))
-                {
-                    throw new UserFriendlyException($"Connection {target.ConnectionId} isn't one this scope can use.", AiErrorCodes.Invalid);
-                }
-
-                if (target.Model is not null && connection.Models.Count > 0 && !connection.Models.Contains(target.Model))
-                {
-                    throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
-                }
+                throw new UserFriendlyException($"Connection {target.ConnectionId} isn't one this scope can use.", AiErrorCodes.Invalid);
             }
 
+            if (target.Model is not null && connection.Models.Count > 0 && !connection.Models.Contains(target.Model))
+            {
+                throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
+            }
+        }
+
+        return await aiDb.RunAsync(async db =>
+        {
             AiAlias? alias = await db.AiAliases.FirstOrDefaultAsync(a => a.ScopeId == scopeId && a.Name == key, ct);
             if (alias is null)
             {
@@ -261,6 +268,15 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }
     }
 
+    /// <summary>Connections are set here only when AbpAi keeps them.</summary>
+    private void KeptHere()
+    {
+        if (!KeepsConnections)
+        {
+            throw new UserFriendlyException("This site's AI connections are kept by the application, and set where it keeps them.", AiErrorCodes.HostConnections);
+        }
+    }
+
     private async Task SiteAdminAsync(AiActor actor, CancellationToken ct)
     {
         if (!await rights.IsSiteAdminAsync(actor, ct))
@@ -334,7 +350,9 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
     private AiSiteSettings Info(AiSite site) => new(site.ScopesMayConnect, site.KeepPrompts, site.PromptDays, site.ScopeDataClasses, rules.Classes);
 
-    private static AiConnectionInfo Info(AiConnection c) => new(c.Id, c.ScopeId, c.Name, c.Provider, c.Endpoint, c.ProtectedKey is not null, c.Models, c.DataClasses,
+    private static AiConnectionInfo Info(AiConnection c) => Info(StoredAiConnections.Describe(c));
+
+    private static AiConnectionInfo Info(AiConnectionDescriptor c) => new(c.Id, c.ScopeId, c.Name, c.Provider, c.Endpoint, c.HasKey, c.Models, c.DataClasses,
         c.Labels, c.Settings, c.InputPrice, c.OutputPrice, c.ModelPrices, c.StructuredOutput, c.Enabled);
 
     private static AiAliasInfo Info(AiAlias a) => new(a.Id, a.ScopeId, a.Name, a.Targets, a.UpdatedAt);

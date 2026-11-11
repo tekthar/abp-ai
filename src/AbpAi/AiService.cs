@@ -5,34 +5,34 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Volo.Abp.DependencyInjection;
-using Volo.Abp.Security.Encryption;
 
 namespace AbpAi;
 
 /// <summary>
 /// The gateway (<see cref="IAi"/>). Each call: the alias leads to a model through the call's scope chain; the data
 /// rules choose the first target that may receive the call's class (or refuse, before anything leaves); the ledger
-/// reserves the estimate against every limit that applies; the provider answers; the record is settled with what it
-/// cost; and the prompt is kept only when the site keeps prompts.
+/// reserves the estimate against every limit that applies; the connection's key is asked of its source; the provider
+/// answers; the record is settled with what it cost; and the prompt is kept only when the site keeps prompts.
 /// </summary>
-public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger ledger, AiDb aiDb, IEnumerable<IAiProvider> providers, IStringEncryptionService encryption,
+public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger ledger, AiDb aiDb, IEnumerable<IAiProvider> providers, IAiConnectionSource connections,
     IOptions<AiOptions> options, ILogger<AiService> logger) : IAi, ITransientDependency
 {
     public async Task<AiChoice> ResolveAsync(string alias, Guid? scopeId = null, string? dataClass = null, CancellationToken cancellationToken = default)
     {
         AiScopeChain chain = await chains.OfAsync(scopeId, cancellationToken);
-        AiRoute route = await router.ChooseAsync(alias, chain, router.ClassOf(dataClass), structured: false, cancellationToken);
+        AiRoute route = await router.ChooseAsync(alias, chain, router.ClassOf(dataClass), AiNeeds.None, cancellationToken);
         return route.ToChoice();
     }
 
     public async Task<AiReply> CompleteAsync(AiRequest request, CancellationToken cancellationToken = default)
     {
-        (AiCall call, IAiProvider provider, AiProviderCall providerCall) = await PrepareAsync(request, streamed: false, cancellationToken);
+        (AiCall call, IAiProvider provider) = await PrepareAsync(request, streamed: false, cancellationToken);
         AiReservation reservation = await ledger.ReserveAsync(call, cancellationToken);
         Stopwatch watch = Stopwatch.StartNew();
         AiProviderReply answer;
         try
         {
+            AiProviderCall providerCall = await ProviderCallAsync(call, cancellationToken);
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.Value.ProviderTimeout);
             answer = await provider.CompleteAsync(providerCall, timeout.Token);
@@ -48,9 +48,20 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
 
     public async IAsyncEnumerable<AiStreamEvent> StreamAsync(AiRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        (AiCall call, IAiProvider provider, AiProviderCall providerCall) = await PrepareAsync(request, streamed: true, cancellationToken);
+        (AiCall call, IAiProvider provider) = await PrepareAsync(request, streamed: true, cancellationToken);
         AiReservation reservation = await ledger.ReserveAsync(call, cancellationToken);
         Stopwatch watch = Stopwatch.StartNew();
+        AiProviderCall providerCall;
+        try
+        {
+            providerCall = await ProviderCallAsync(call, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await ledger.FailAsync(reservation, ex.Message, (int)watch.ElapsedMilliseconds);
+            throw Refusal(ex, call, cancellationToken);
+        }
+
         Providers.AiMessageBuilder builder = new();
         IAsyncEnumerator<AiStreamEvent>? events = null;
         bool ended = false;
@@ -101,7 +112,7 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
         yield return new AiStreamEvent(AiStreamEvent.Done, reply.Message) { Reply = reply };
     }
 
-    private async Task<(AiCall Call, IAiProvider Provider, AiProviderCall ProviderCall)> PrepareAsync(AiRequest request, bool streamed, CancellationToken ct)
+    private async Task<(AiCall Call, IAiProvider Provider)> PrepareAsync(AiRequest request, bool streamed, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Alias))
         {
@@ -130,13 +141,20 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
 
         AiScopeChain chain = await chains.OfAsync(request.ScopeId, ct);
         string dataClass = router.ClassOf(request.DataClass);
-        AiRoute route = await router.ChooseAsync(request.Alias, chain, dataClass, request.OutputSchema is not null, ct);
+        AiRoute route = await router.ChooseAsync(request.Alias, chain, dataClass, AiNeeds.Of(request), ct);
         IAiProvider provider = providers.LastOrDefault(p => string.Equals(p.Kind, route.Connection.Provider, StringComparison.OrdinalIgnoreCase))
             ?? throw new AiRefusedException(AiRefusalCodes.NoModel, $"No provider \"{route.Connection.Provider}\" is installed for {route.Connection.Name}.");
+        return (new AiCall(request, chain, route, dataClass, Estimate(request, route), streamed), provider);
+    }
 
-        AiTarget target = new(route.Connection.Id, route.Connection.Name, route.Connection.Endpoint,
-            route.Connection.ProtectedKey is { Length: > 0 } key ? encryption.Decrypt(key) : null, route.Model, route.Connection.Settings);
-        AiProviderCall providerCall = new(target, request.Messages, request.System, request.Tools, request.MaxTokens, request.OutputSchema)
+    /// <summary>The call as its provider gets it, with the connection's key: asked of the source only now, as the call goes out.</summary>
+    private async Task<AiProviderCall> ProviderCallAsync(AiCall call, CancellationToken ct)
+    {
+        AiRequest request = call.Request;
+        AiConnectionDescriptor connection = call.Route.Connection;
+        string? key = await connections.KeyAsync(connection.Id, ct);
+        AiTarget target = new(connection.Id, connection.Name, connection.Endpoint, key, call.Route.Model, connection.Settings);
+        return new AiProviderCall(target, request.Messages, request.System, request.Tools, request.MaxTokens, request.OutputSchema)
         {
             Purpose = request.Purpose,
             ScopeId = request.ScopeId,
@@ -144,7 +162,6 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
             ProviderOptions = Given(request.ProviderOptions),
             Request = request,
         };
-        return (new AiCall(request, chain, route, dataClass, Estimate(request, route), streamed), provider, providerCall);
     }
 
     /// <summary>A call's estimate before it leaves: its text's tokens in, and all its MaxTokens out.</summary>

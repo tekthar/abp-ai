@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Volo.Abp.Security.Encryption;
 
 namespace AbpAi;
 
@@ -24,6 +25,44 @@ public sealed class NoAiRights : IAiRights
 public sealed class NoAiGroups : IAiAccounts
 {
     public Task<IReadOnlyList<Guid>> GroupsOfAsync(Guid accountId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Guid>>([]);
+}
+
+/// <summary>
+/// The connections AbpAi keeps itself, in its <c>connections</c> table, set through <see cref="AiAdminService"/>; their keys
+/// are encrypted with the site's string encryption and decrypted only as a call goes out.
+/// </summary>
+public class StoredAiConnections(AiDb aiDb, IStringEncryptionService encryption) : IAiConnectionSource
+{
+    public async Task<IReadOnlyList<AiConnectionDescriptor>> ListAsync(IReadOnlyCollection<Guid> scopeIds, CancellationToken cancellationToken)
+    {
+        List<Guid> ids = [.. scopeIds];
+        List<AiConnection> found = await aiDb.RunAsync(db => db.AiConnections.AsNoTracking().Where(c => c.ScopeId == null || ids.Contains(c.ScopeId.Value))
+            .ToListAsync(cancellationToken), cancellationToken: cancellationToken);
+        return [.. found.Select(Describe)];
+    }
+
+    public async Task<string?> KeyAsync(Guid connectionId, CancellationToken cancellationToken)
+    {
+        string? key = await aiDb.RunAsync(db => db.AiConnections.AsNoTracking().Where(c => c.Id == connectionId).Select(c => c.ProtectedKey).FirstOrDefaultAsync(cancellationToken),
+            cancellationToken: cancellationToken);
+        return key is { Length: > 0 } ? encryption.Decrypt(key) : null;
+    }
+
+    /// <summary>A stored connection as the gateway reads it.</summary>
+    public static AiConnectionDescriptor Describe(AiConnection c) => new(c.Id, c.ScopeId, c.Name, c.Provider)
+    {
+        Endpoint = c.Endpoint,
+        Settings = c.Settings,
+        Models = c.Models,
+        DataClasses = c.DataClasses,
+        Labels = c.Labels,
+        InputPrice = c.InputPrice,
+        OutputPrice = c.OutputPrice,
+        ModelPrices = c.ModelPrices,
+        StructuredOutput = c.StructuredOutput,
+        Enabled = c.Enabled,
+        HasKey = c.ProtectedKey is not null,
+    };
 }
 
 /// <summary>Writes a limit nearing to the log.</summary>

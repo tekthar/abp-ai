@@ -1,4 +1,8 @@
+using System.Runtime.CompilerServices;
 using Volo.Abp.Domain.Entities;
+
+// AiPrice moved to AbpAi.Contracts in 0.3.0, so a host's connection source can name prices; code built against 0.2.0 finds it there.
+[assembly: TypeForwardedTo(typeof(AbpAi.AiPrice))]
 
 namespace AbpAi;
 
@@ -64,9 +68,6 @@ public class AiConnection : Entity<Guid>
 
     public AiPrice PriceOf(string model) => ModelPrices.TryGetValue(model, out AiPrice? price) ? price : new AiPrice(InputPrice, OutputPrice);
 }
-
-/// <summary>A price per million tokens.</summary>
-public sealed record AiPrice(decimal Input, decimal Output);
 
 /// <summary>An alias's target: a connection and one of its models (null: the connection's first).</summary>
 public sealed record AiAliasTarget(Guid ConnectionId, string? Model = null);

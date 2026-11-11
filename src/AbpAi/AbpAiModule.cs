@@ -10,7 +10,8 @@ namespace AbpAi;
 /// AbpAi: the model gateway. A host maps the tables in its own context (<see cref="AiModel.ConfigureAi"/>), replaces
 /// <see cref="IAiDbContext"/> with it, and gives its scopes (<see cref="IAiScopes"/>), its admins
 /// (<see cref="IAiRights"/>) and, if it has them, groups and a way to tell admins (<see cref="IAiAccounts"/>,
-/// <see cref="IAiNotices"/>). Everything that calls a model takes <see cref="IAi"/>.
+/// <see cref="IAiNotices"/>), and, if it keeps connections of its own, where they are (<see cref="IAiConnectionSource"/>).
+/// Everything that calls a model takes <see cref="IAi"/>.
 /// </summary>
 [DependsOn(typeof(Volo.Abp.EntityFrameworkCore.PostgreSql.AbpEntityFrameworkCorePostgreSqlModule), typeof(AbpSecurityModule))]
 public class AbpAiModule : AbpModule
@@ -29,6 +30,7 @@ public class AbpAiModule : AbpModule
         services.TryAddSingleton<IAiRights, NoAiRights>();
         services.TryAddSingleton<IAiAccounts, NoAiGroups>();
         services.TryAddTransient<IAiNotices, LoggedAiNotices>();
+        services.TryAddTransient<IAiConnectionSource, StoredAiConnections>();
 
         // The built-in providers; others plug in by adding an IAiProvider (the last of a kind wins).
         services.AddHttpClient(nameof(AnthropicProvider), c => c.Timeout = Timeout.InfiniteTimeSpan);

@@ -19,8 +19,12 @@ public sealed class AiDataRules(IOptions<AiOptions> options) : ISingletonDepende
         stated is not null && _classes.FirstOrDefault(c => string.Equals(c, stated.Trim(), StringComparison.OrdinalIgnoreCase)) is { } known ? known : _classes[^1];
 
     /// <summary>The connection may receive the class.</summary>
-    public static bool Allows(AiConnection connection, string dataClass) =>
-        connection.DataClasses.Any(c => string.Equals(c, dataClass, StringComparison.OrdinalIgnoreCase));
+    public static bool Allows(AiConnection connection, string dataClass) => Allows(connection.DataClasses, dataClass);
+
+    /// <summary>The connection may receive the class.</summary>
+    public static bool Allows(AiConnectionDescriptor connection, string dataClass) => Allows(connection.DataClasses, dataClass);
+
+    private static bool Allows(IEnumerable<string> classes, string dataClass) => classes.Any(c => string.Equals(c, dataClass, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The classes, checked: each one the site defines.</summary>
     public List<string> Checked(IEnumerable<string>? classes)
@@ -96,4 +100,10 @@ public static class AiErrorCodes
 
     /// <summary>The input isn't right. 400.</summary>
     public const string Invalid = "AbpAi:Invalid";
+
+    /// <summary>
+    /// The host keeps the connections (it gave its own <see cref="IAiConnectionSource"/>), so they're set where it keeps
+    /// them, not through AbpAi's admin. 409.
+    /// </summary>
+    public const string HostConnections = "AbpAi:HostConnections";
 }

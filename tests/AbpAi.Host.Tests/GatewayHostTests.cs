@@ -18,9 +18,11 @@ namespace AbpAi.Host.Tests;
 /// and aggregates) and "on-prem" (every class). Each "Done when" of the requirements has a test here. Needs Postgres:
 /// localhost:5432 (postgres/postgres), or the server ABP_AI_TEST_POSTGRES names.
 /// </summary>
+[Collection(HostCollection.Name)]
 public sealed class GatewayHostTests : IAsyncLifetime
 {
-    private static readonly string Server =
+    /// <summary>The Postgres server the host tests make their databases on.</summary>
+    internal static readonly string Server =
         Environment.GetEnvironmentVariable("ABP_AI_TEST_POSTGRES") is { Length: > 0 } server ? server : "Host=localhost;Port=5432;Username=postgres;Password=postgres";
 
     // The sample's settings (appsettings.json).
@@ -37,6 +39,7 @@ public sealed class GatewayHostTests : IAsyncLifetime
 
     private readonly string _database = "abp_ai_host_" + Guid.NewGuid().ToString("N")[..12];
     private readonly RecordingNotices _notices = new();
+    private readonly AcmeProvider _acme = new();
     private WebApplicationFactory<Program>? _factory;
     private Guid _publicCloud;
     private Guid _onPrem;
@@ -44,7 +47,11 @@ public sealed class GatewayHostTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", $"{Server};Database={_database}");
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.ConfigureServices(s => s.Replace(ServiceDescriptor.Singleton<IAiNotices>(_notices))));
+        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.Replace(ServiceDescriptor.Singleton<IAiNotices>(_notices));
+            s.AddSingleton<IAiProvider>(_acme);
+        }));
         _ = _factory.Server; // starts the host, which makes the database
 
         AiAdminService admin = Get<AiAdminService>();
@@ -440,6 +447,24 @@ public sealed class GatewayHostTests : IAsyncLifetime
         {
             ProviderOptions = JsonSerializer.SerializeToElement(new[] { 1 }),
         }));
+    }
+
+    [Fact]
+    public async Task A_connection_may_be_to_a_provider_of_the_hosts_own_kind()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        Assert.True(admin.KeepsConnections);
+        AiConnectionInfo bedrock = await admin.CreateConnectionAsync(SiteAdmin, null, new AiConnectionInput("bedrock", AcmeProvider.TheKind, ["acme-large"],
+            [.. AiDataClasses.Default]) { ApiKey = "acme-key", OutputPrice = 1000 }, default);
+        Assert.Equal(AcmeProvider.TheKind, bedrock.Provider);
+        await admin.SetAliasAsync(SiteAdmin, null, "acme", [new AiAliasTarget(bedrock.Id)], default);
+
+        AiReply reply = await Ask(Budget, Ben, alias: "acme", dataClass: AiDataClasses.Rows);
+        Assert.Equal("From the host's provider.", reply.Text);
+        Assert.Equal(("acme-key", "acme-large"), (Assert.Single(_acme.Calls).Target.ApiKey, _acme.Calls[0].Target.Model));
+        Assert.Equal(AcmeProvider.TheKind, await Db(db => db.AiUsage.Where(r => r.Id == reply.UsageId).Select(r => r.Provider).SingleAsync()));
+        Assert.Equal(AcmeProvider.TheKind, (await admin.UpdateConnectionAsync(SiteAdmin, bedrock.Id, new AiConnectionInput("bedrock", "ACME:Bedrock", ["acme-large"],
+            [.. AiDataClasses.Default]), default)).Provider);
     }
 
     [Fact]
