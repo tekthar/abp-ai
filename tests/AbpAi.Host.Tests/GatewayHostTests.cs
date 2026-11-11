@@ -262,6 +262,67 @@ public sealed class GatewayHostTests : IAsyncLifetime
         Assert.Single(await admin.ListConnectionsAsync(FinanceAdmin, Finance, default), c => c.Id == created.Id);
     }
 
+    // Which site models a scope may use ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task When_the_site_lists_what_scopes_may_use_a_scope_reaches_only_what_its_nearest_access_opens()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        AiSiteSettings open = await admin.GetSiteAsync(SiteAdmin, default);
+        Assert.Equal(AiScopeAccessModes.Open, open.ScopeAccess);
+        await admin.SetSiteAsync(SiteAdmin, open with { ScopeAccess = AiScopeAccessModes.Listed }, default);
+
+        // With no access set, a scope may use none of the site's models; the site's own calls still may.
+        AiRefusedException none = await Assert.ThrowsAsync<AiRefusedException>(() => Ask(Budget, Ben));
+        Assert.Equal(AiRefusalCodes.NoModel, none.Code);
+        Assert.Contains("open to this scope", none.Message);
+        Assert.Equal("public-cloud", (await Ask(null, Ben)).Connection);
+
+        // Finance opens on-prem's model, by its name or its id: its projects have it; "smart" passes over public-cloud.
+        AiScopeAccessInfo finance = await admin.SetScopeAccessAsync(SiteAdmin, Finance, new AiScopeAccessInput(false, [new AiModelRef(_onPrem, "local-70b")], false), default);
+        Assert.Equal((Finance, (Guid?)Finance), (finance.ScopeId, finance.SetOnScopeId));
+        Assert.Equal("on-prem", (await Ask(Budget, Ben)).Connection);
+        Assert.Equal((Guid?)Finance, (await admin.GetScopeAccessAsync(SiteAdmin, Budget, default)).SetOnScopeId);
+        Assert.Equal(AiRefusalCodes.NoModel, (await Assert.ThrowsAsync<AiRefusedException>(() => Ask(Pipeline, Cy))).Code);
+
+        // Payroll's own access opens every site model, until it's taken away.
+        await admin.SetScopeAccessAsync(SiteAdmin, Payroll, new AiScopeAccessInput(true, null, false), default);
+        Assert.Equal("public-cloud", (await Ask(Payroll, Ben)).Connection);
+        await admin.DeleteScopeAccessAsync(SiteAdmin, Payroll, default);
+        Assert.Equal("on-prem", (await Ask(Payroll, Ben)).Connection);
+        Assert.Equal([Finance], (await admin.ListScopeAccessAsync(SiteAdmin, default)).Select(a => a.ScopeId));
+
+        // A scope's alias leads only to what's open to it, and only the site's admins set access, to the site's models.
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.SetAliasAsync(FinanceAdmin, Finance, "mine", [new AiAliasTarget(_publicCloud)], default));
+        await admin.SetAliasAsync(FinanceAdmin, Finance, "mine", [new AiAliasTarget(_onPrem)], default);
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.SetScopeAccessAsync(FinanceAdmin, Finance, new AiScopeAccessInput(true, null, true), default));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() =>
+            admin.SetScopeAccessAsync(SiteAdmin, Finance, new AiScopeAccessInput(false, [new AiModelRef(_onPrem, "nonesuch")], false), default));
+
+        // Site settings set without the mode keep it.
+        await admin.SetSiteAsync(SiteAdmin, new AiSiteSettings(false, false, 30, [AiDataClasses.Public], []), default);
+        Assert.Equal(AiScopeAccessModes.Listed, (await admin.GetSiteAsync(SiteAdmin, default)).ScopeAccess);
+    }
+
+    [Fact]
+    public async Task When_the_site_lists_what_scopes_may_use_a_scope_connects_its_own_only_when_its_access_lets_it()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        await admin.SetSiteAsync(SiteAdmin, new AiSiteSettings(true, false, 30, [AiDataClasses.Public, AiDataClasses.Internal], []) { ScopeAccess = AiScopeAccessModes.Listed },
+            default);
+        AiConnectionInput mine = new("finance-cloud", "demo", ["fin-model"], [AiDataClasses.Internal]);
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.CreateConnectionAsync(FinanceAdmin, Finance, mine, default));
+
+        await admin.SetScopeAccessAsync(SiteAdmin, Finance, new AiScopeAccessInput(false, null, true), default);
+        await admin.CreateConnectionAsync(FinanceAdmin, Finance, mine, default);
+        Assert.Equal("finance-cloud", (await Get<IAi>().ResolveAsync("fin-model", Payroll, AiDataClasses.Internal)).Connection);
+
+        // Payroll's own access, which doesn't let it connect, is the one that applies there.
+        await admin.SetScopeAccessAsync(SiteAdmin, Payroll, new AiScopeAccessInput(true, null, false), default);
+        Assert.Equal(AiRefusalCodes.NoModel, (await Assert.ThrowsAsync<AiRefusedException>(() => Get<IAi>().ResolveAsync("fin-model", Payroll, AiDataClasses.Internal))).Code);
+        Assert.Equal("finance-cloud", (await Get<IAi>().ResolveAsync("fin-model", Budget, AiDataClasses.Internal)).Connection);
+    }
+
     [Fact]
     public async Task Keys_are_never_shown_and_prompts_are_kept_only_when_the_site_turns_that_on()
     {

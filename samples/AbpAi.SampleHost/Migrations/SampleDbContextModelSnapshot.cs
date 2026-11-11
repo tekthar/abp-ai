@@ -199,6 +199,29 @@ namespace AbpAi.SampleHost.Migrations
                     b.ToTable("prompts", "ai");
                 });
 
+            modelBuilder.Entity("AbpAi.AiScopeAccess", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AllSiteModels")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("MayConnect")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SiteModels")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("scope_access", "ai");
+                });
+
             modelBuilder.Entity("AbpAi.AiSite", b =>
                 {
                     b.Property<Guid>("Id")
@@ -209,6 +232,13 @@ namespace AbpAi.SampleHost.Migrations
 
                     b.Property<int>("PromptDays")
                         .HasColumnType("integer");
+
+                    b.Property<string>("ScopeAccess")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("open");
 
                     b.Property<string>("ScopeDataClasses")
                         .IsRequired()

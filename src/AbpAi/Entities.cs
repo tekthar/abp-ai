@@ -300,6 +300,54 @@ public class AiPromptRecord : Entity<Guid>
     public string? Reply { get; set; }
 }
 
+/// <summary>How the site's models are open to scopes.</summary>
+public static class AiScopeAccessModes
+{
+    /// <summary>Every scope uses every one of the site's connections; scopes connect their own while the site lets them.</summary>
+    public const string Open = "open";
+
+    /// <summary>
+    /// A scope uses the site's models only as its access (<see cref="AiScopeAccess"/>, its own or the nearest above it)
+    /// lists them, and connections of its own only when the site lets scopes connect and its access lets it.
+    /// </summary>
+    public const string Listed = "listed";
+
+    public static readonly IReadOnlyList<string> All = [Open, Listed];
+}
+
+/// <summary>One of the site's models: its connection, and the provider's id for it.</summary>
+public sealed record AiModelRef(Guid ConnectionId, string Model);
+
+/// <summary>
+/// Which of the site's models a scope may use, and whether it may connect its own, when the site lists them
+/// (<see cref="AiScopeAccessModes.Listed"/>). Its id is the scope's. A scope with none has the nearest one above it;
+/// a scope with none anywhere above it may use none of the site's models.
+/// </summary>
+public class AiScopeAccess : Entity<Guid>
+{
+    protected AiScopeAccess()
+    {
+    }
+
+    public AiScopeAccess(Guid scopeId) : base(scopeId)
+    {
+    }
+
+    /// <summary>Every one of the site's models, the ones added later too.</summary>
+    public bool AllSiteModels { get; set; }
+
+    /// <summary>The site's models it may use, when not all of them.</summary>
+    public List<AiModelRef> SiteModels { get; set; } = [];
+
+    /// <summary>Its admins may set connections of their own, while the site lets scopes connect.</summary>
+    public bool MayConnect { get; set; }
+
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>It may use the site's model.</summary>
+    public bool Opens(Guid connectionId, string model) => AllSiteModels || SiteModels.Contains(new AiModelRef(connectionId, model));
+}
+
 /// <summary>The site's AI settings: one row.</summary>
 public class AiSite : Entity<Guid>
 {
@@ -323,6 +371,9 @@ public class AiSite : Entity<Guid>
 
     /// <summary>The data classes a scope's own connections may list at most, so a scope's admin can't widen what leaves.</summary>
     public List<string> ScopeDataClasses { get; set; } = [];
+
+    /// <summary>How scopes use the site's models: <see cref="AiScopeAccessModes.Open"/> (every scope, every model) or <see cref="AiScopeAccessModes.Listed"/>.</summary>
+    public string ScopeAccess { get; set; } = AiScopeAccessModes.Open;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

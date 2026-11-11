@@ -22,6 +22,9 @@ public interface IAiDbContext : IEfCoreDbContext
     DbSet<AiUsageRecord> AiUsage { get; }
     DbSet<AiPromptRecord> AiPrompts { get; }
     DbSet<AiSite> AiSites { get; }
+
+    /// <summary>Which of the site's models each scope may use, when the site lists them. A host's context needn't name it.</summary>
+    DbSet<AiScopeAccess> AiScopeAccess => Set<AiScopeAccess>();
 }
 
 /// <summary>Runs the gateway's work in a unit of work: the caller's when there is one, or a new one.</summary>
@@ -128,6 +131,14 @@ public static class AiModel
             b.ToTable("site", Schema);
             b.Property(x => x.Id).ValueGeneratedNever();
             b.Property(x => x.ScopeDataClasses).HasJsonConversion();
+            b.Property(x => x.ScopeAccess).HasMaxLength(16).IsRequired().HasDefaultValue(AiScopeAccessModes.Open);
+        });
+
+        builder.Entity<AiScopeAccess>(b =>
+        {
+            b.ToTable("scope_access", Schema);
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.SiteModels).HasJsonConversion();
         });
     }
 

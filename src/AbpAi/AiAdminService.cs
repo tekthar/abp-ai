@@ -9,7 +9,24 @@ namespace AbpAi;
 
 /// <summary>The site's settings as an admin reads and sets them.</summary>
 /// <param name="ScopeDataClasses">The classes a scope's own connections may list at most: a scope's admin can't widen what leaves.</param>
-public sealed record AiSiteSettings(bool ScopesMayConnect, bool KeepPrompts, int PromptDays, IReadOnlyList<string> ScopeDataClasses, IReadOnlyList<string> DataClasses);
+public sealed record AiSiteSettings(bool ScopesMayConnect, bool KeepPrompts, int PromptDays, IReadOnlyList<string> ScopeDataClasses, IReadOnlyList<string> DataClasses)
+{
+    /// <summary>
+    /// How scopes use the site's models: <c>open</c> (every scope, every model) or <c>listed</c> (as each scope's access
+    /// says). Always set when read; null when set keeps what's there.
+    /// </summary>
+    public string? ScopeAccess { get; init; }
+}
+
+/// <summary>Which of the site's models a scope may use, when the site lists them, and whether it may connect its own.</summary>
+/// <param name="SiteModels">The site's models it may use (a model by its id or its name), when not all of them.</param>
+public sealed record AiScopeAccessInput(bool AllSiteModels, IReadOnlyList<AiModelRef>? SiteModels, bool MayConnect);
+
+/// <summary>
+/// The access that applies in a scope: set on it, or on the nearest scope above it (<see cref="SetOnScopeId"/>); with
+/// none set anywhere above it (<see cref="SetOnScopeId"/> null) it may use none of the site's models, nor connect its own.
+/// </summary>
+public sealed record AiScopeAccessInfo(Guid ScopeId, Guid? SetOnScopeId, bool AllSiteModels, IReadOnlyList<AiModelRef> SiteModels, bool MayConnect);
 
 /// <summary>
 /// A connection as an admin sets it. A null key keeps the one there; an empty one takes it away. Null model settings keep
@@ -76,9 +93,15 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }
 
         List<string> scopeClasses = rules.Checked(input.ScopeDataClasses);
+        if (input.ScopeAccess is not null && !AiScopeAccessModes.All.Contains(input.ScopeAccess))
+        {
+            throw new UserFriendlyException($"Scopes' access is {string.Join(" or ", AiScopeAccessModes.All)}.", AiErrorCodes.Invalid);
+        }
+
         return await aiDb.RunAsync(async db =>
         {
             AiSite site = await SiteAsync(db, ct);
+            site.ScopeAccess = input.ScopeAccess ?? site.ScopeAccess;
             site.ScopesMayConnect = input.ScopesMayConnect;
             site.KeepPrompts = input.KeepPrompts;
             site.PromptDays = input.PromptDays;
@@ -93,6 +116,69 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     public bool KeepsConnections => source is StoredAiConnections;
 
     /// <summary>The connections set on the site or a scope, from wherever they're kept.</summary>
+    /// <summary>The access that applies in a scope, when the site lists what each scope may use: its own, or the nearest above it.</summary>
+    public async Task<AiScopeAccessInfo> GetScopeAccessAsync(AiActor actor, Guid scopeId, CancellationToken ct)
+    {
+        await SiteAdminAsync(actor, ct);
+        AiScopeChain chain = await chains.OfAsync(scopeId, ct);
+        AiScopeAccess? access = await aiDb.RunAsync(db => AiRouter.AccessOfAsync(db, chain, ct), cancellationToken: ct);
+        return Info(scopeId, access);
+    }
+
+    /// <summary>Every scope's access that's set.</summary>
+    public async Task<List<AiScopeAccessInfo>> ListScopeAccessAsync(AiActor actor, CancellationToken ct)
+    {
+        await SiteAdminAsync(actor, ct);
+        List<AiScopeAccess> found = await aiDb.RunAsync(db => db.AiScopeAccess.AsNoTracking().OrderBy(a => a.Id).ToListAsync(ct), cancellationToken: ct);
+        return [.. found.Select(a => Info(a.Id, a))];
+    }
+
+    /// <summary>
+    /// Sets which of the site's models a scope (and the scopes under it with none of their own) may use, and whether it may
+    /// connect its own: for when the site lists them. Each model is one of the site's connections'.
+    /// </summary>
+    public async Task<AiScopeAccessInfo> SetScopeAccessAsync(AiActor actor, Guid scopeId, AiScopeAccessInput input, CancellationToken ct)
+    {
+        await SiteAdminAsync(actor, ct);
+        IReadOnlyList<AiConnectionDescriptor> site = await source.ListAsync([], ct);
+        List<AiModelRef> models = [];
+        foreach (AiModelRef wanted in input.SiteModels ?? [])
+        {
+            AiConnectionDescriptor connection = site.FirstOrDefault(c => c.Id == wanted.ConnectionId && c.ScopeId is null)
+                ?? throw new UserFriendlyException($"Connection {wanted.ConnectionId} isn't one of the site's.", AiErrorCodes.Invalid);
+            AiModelRef model = new(connection.Id, connection.ModelIdOf(wanted.Model?.Trim() ?? "")
+                ?? throw new UserFriendlyException($"{connection.Name} doesn't offer {wanted.Model}.", AiErrorCodes.Invalid));
+            if (!models.Contains(model))
+            {
+                models.Add(model);
+            }
+        }
+
+        return await aiDb.RunAsync(async db =>
+        {
+            AiScopeAccess? access = await db.AiScopeAccess.FirstOrDefaultAsync(a => a.Id == scopeId, ct);
+            if (access is null)
+            {
+                access = new AiScopeAccess(scopeId);
+                db.AiScopeAccess.Add(access);
+            }
+
+            access.AllSiteModels = input.AllSiteModels;
+            access.SiteModels = models;
+            access.MayConnect = input.MayConnect;
+            access.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return Info(scopeId, access);
+        }, cancellationToken: ct);
+    }
+
+    /// <summary>Takes a scope's own access away: the nearest above it applies again.</summary>
+    public async Task DeleteScopeAccessAsync(AiActor actor, Guid scopeId, CancellationToken ct)
+    {
+        await SiteAdminAsync(actor, ct);
+        await aiDb.RunAsync(db => db.AiScopeAccess.Where(a => a.Id == scopeId).ExecuteDeleteAsync(ct), cancellationToken: ct);
+    }
+
     public async Task<List<AiConnectionInfo>> ListConnectionsAsync(AiActor actor, Guid? scopeId, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
@@ -207,6 +293,13 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
         AiScopeChain chain = await chains.OfAsync(scopeId, ct);
         IReadOnlyList<AiConnectionDescriptor> connections = await source.ListAsync([.. chain.Up], ct);
+        AiScopeAccess? access = null;
+        bool listed = scopeId is not null && await aiDb.RunAsync(async db =>
+        {
+            bool isListed = (await db.AiSites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == AiSite.TheId, ct))?.ScopeAccess == AiScopeAccessModes.Listed;
+            access = isListed ? await AiRouter.AccessOfAsync(db, chain, ct) : null;
+            return isListed;
+        }, cancellationToken: ct);
         List<AiAliasTarget> kept = [];
         foreach (AiAliasTarget target in targets)
         {
@@ -219,6 +312,13 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             // A model named by its name is kept by its id, so renaming it later doesn't break the alias.
             string? model = target.Model is null || connection.Models.Count == 0 ? target.Model : connection.ModelIdOf(target.Model)
                 ?? throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
+
+            // When the site lists what scopes may use, a scope's alias leads only to the site's models open to it.
+            if (listed && connection.ScopeId is null && (model ?? AiRouter.DefaultModel(connection)) is { } used && access?.Opens(connection.Id, used) != true)
+            {
+                throw new UserFriendlyException($"{connection.Name}'s {used} isn't open to this scope.", AiErrorCodes.Invalid);
+            }
+
             kept.Add(target with { Model = model });
         }
 
@@ -361,6 +461,11 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             throw new UserFriendlyException("The site doesn't let scopes set connections of their own.", AiErrorCodes.Forbidden);
         }
 
+        if (site.ScopeAccess == AiScopeAccessModes.Listed && await AiRouter.AccessOfAsync(db, await chains.OfAsync(scopeId, ct), ct) is not { MayConnect: true })
+        {
+            throw new UserFriendlyException("The site doesn't let this scope set connections of its own.", AiErrorCodes.Forbidden);
+        }
+
         List<string> beyond = [.. classes.Where(c => !site.ScopeDataClasses.Contains(c, StringComparer.OrdinalIgnoreCase))];
         if (beyond.Count > 0)
         {
@@ -458,7 +563,13 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         return site;
     }
 
-    private AiSiteSettings Info(AiSite site) => new(site.ScopesMayConnect, site.KeepPrompts, site.PromptDays, site.ScopeDataClasses, rules.Classes);
+    private AiSiteSettings Info(AiSite site) => new(site.ScopesMayConnect, site.KeepPrompts, site.PromptDays, site.ScopeDataClasses, rules.Classes)
+    {
+        ScopeAccess = site.ScopeAccess,
+    };
+
+    private static AiScopeAccessInfo Info(Guid scopeId, AiScopeAccess? access) =>
+        access is null ? new(scopeId, null, false, [], false) : new(scopeId, access.Id, access.AllSiteModels, access.SiteModels, access.MayConnect);
 
     private static AiConnectionInfo Info(AiConnection c) => Info(StoredAiConnections.Describe(c));
 
