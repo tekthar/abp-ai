@@ -60,6 +60,13 @@ public class SampleDbContext(DbContextOptions<SampleDbContext> options) : AbpDbC
     }
 }
 
+/// <summary>For <c>dotnet ef migrations add</c> only: the sample's migrations are made from its context, as a host's are.</summary>
+public class SampleDbContextFactory : Microsoft.EntityFrameworkCore.Design.IDesignTimeDbContextFactory<SampleDbContext>
+{
+    public SampleDbContext CreateDbContext(string[] args) =>
+        new(new DbContextOptionsBuilder<SampleDbContext>().UseNpgsql("Host=localhost;Port=5432;Database=abp_ai_sample;Username=postgres;Password=postgres").Options);
+}
+
 /// <summary>A scope in the sample's settings: a department (no parent) or a project under one.</summary>
 public sealed class SampleScope
 {

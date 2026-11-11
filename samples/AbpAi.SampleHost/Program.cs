@@ -1,4 +1,5 @@
 using AbpAi.SampleHost;
+using Microsoft.EntityFrameworkCore;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.Uow;
 
@@ -9,17 +10,18 @@ await builder.AddApplicationAsync<SampleHostModule>();
 
 WebApplication app = builder.Build();
 await app.InitializeApplicationAsync();
-await CreateDatabaseAsync(app.Services);
+await MigrateAsync(app.Services);
 await app.RunAsync();
 
-// The sample makes its tables from the model. A real host adds the gateway's tables to its own migrations
-// (dotnet ef migrations add), as it does its own, and runs them on start or in its deploy.
-static async Task CreateDatabaseAsync(IServiceProvider services)
+// The sample makes its tables with its migrations (Migrations/), as a host does: the gateway's tables are in the host's
+// own migrations (dotnet ef migrations add, after ConfigureAi), run on start or in its deploy. AbpAi020 makes 0.2.0's
+// tables; each later one is what a version adds.
+static async Task MigrateAsync(IServiceProvider services)
 {
     using IServiceScope scope = services.CreateScope();
     using IUnitOfWork uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkManager>().Begin();
     SampleDbContext db = await scope.ServiceProvider.GetRequiredService<IDbContextProvider<SampleDbContext>>().GetDbContextAsync();
-    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
     await uow.CompleteAsync();
 }
 
