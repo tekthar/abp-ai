@@ -6,6 +6,10 @@ AbpAgent.
 
 > **Preview.** 0.x versions may change their API in any minor version (SemVer). Pin an exact version.
 
+> **Not a Volosoft project.** [ABP Framework](https://abp.io) is made and owned by [Volosoft](https://volosoft.com).
+> AbpAi is an independent enhancement that works on ABP: this repository and its packages don't belong to
+> Volosoft, and aren't affiliated with or endorsed by them.
+
 ## What it does
 
 - **One call:** `IAi.CompleteAsync` (one whole reply), `StreamAsync` (the reply as it's written), `ResolveAsync` (which
