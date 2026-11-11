@@ -203,6 +203,95 @@ public sealed class GatewayHostTests : IAsyncLifetime
         Assert.Equal(("account", (Guid?)agent), (refused.Limit!.Kind, refused.Limit.AccountId));
     }
 
+    // Limits by what they count -------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_limit_may_count_tokens_or_calls_a_minute_and_its_refusal_says_what_it_counts()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        int perCall = await TokensOfOneCallAsync();
+
+        // Finance's tokens a day: two calls fit, the third doesn't.
+        AiLimitInfo tokens = await admin.SetLimitAsync(FinanceAdmin, Finance, new AiLimitInput(AiLimitKinds.Total, AiPeriods.Day, perCall * 2 + perCall / 2)
+            { Measure = AiLimitMeasures.Tokens }, default);
+        Assert.Equal(AiLimitMeasures.Tokens, tokens.Measure);
+        await Ask(Budget, Ben);
+        await Ask(Payroll, Cy);
+        AiRefusedException refused = await Assert.ThrowsAsync<AiRefusedException>(() => Ask(Budget, Cy));
+        Assert.Equal((AiLimitMeasures.Tokens, "scope", (Guid?)Finance, (decimal)perCall * 2), (refused.Limit!.Measure, refused.Limit.Kind, refused.Limit.ScopeId, refused.Limit.Spent));
+        Assert.Contains("token limit", refused.Message);
+
+        // Sales' calls a minute: two, and no one is told of a rate nearing.
+        if (DateTime.UtcNow.Second >= 50)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(61 - DateTime.UtcNow.Second));
+        }
+
+        await admin.SetLimitAsync(SiteAdmin, Sales, new AiLimitInput(AiLimitKinds.Total, AiPeriods.Minute, 2) { Measure = AiLimitMeasures.Requests }, default);
+        await Ask(Pipeline, Ben);
+        await Ask(Pipeline, Cy);
+        AiRefusedException rate = await Assert.ThrowsAsync<AiRefusedException>(() => Ask(Pipeline, Ben));
+        Assert.Equal((AiLimitMeasures.Requests, AiPeriods.Minute, 2m), (rate.Limit!.Measure, rate.Limit.Period, rate.Limit.Spent));
+        Assert.Equal(AiPeriods.Of(AiPeriods.Minute, DateTime.UtcNow).End, rate.Limit.FreesAt);
+        Assert.Contains("per-minute AI call limit", rate.Message);
+        Assert.Equal([(AiPeriods.Day, AiLimitMeasures.Tokens)], _notices.Heard.Select(n => (n.Limit.Period, n.Limit.Measure)));
+
+        // The cost limits there before are untouched: the same kind and period, counting cost, is a limit of its own.
+        await admin.SetLimitAsync(SiteAdmin, Sales, new AiLimitInput(AiLimitKinds.Total, AiPeriods.Minute, 100), default);
+        Assert.Equal([(AiLimitMeasures.Cost, 100m), (AiLimitMeasures.Requests, 2m)],
+            (await admin.ListLimitsAsync(SiteAdmin, Sales, default)).Select(l => (l.Measure, l.Amount)));
+    }
+
+    [Fact]
+    public async Task A_reply_is_cut_to_the_most_tokens_the_site_a_scope_or_an_account_lets_one_have()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        AiScript script = Get<AiScript>();
+        await admin.SetLimitAsync(SiteAdmin, null, new AiLimitInput(AiLimitKinds.CallTokens, "", 15), default);
+        await admin.SetLimitAsync(FinanceAdmin, Finance, new AiLimitInput(AiLimitKinds.CallTokens, "", 10), default);
+        await admin.SetLimitAsync(SiteAdmin, null, new AiLimitInput(AiLimitKinds.CallTokens, "", 4, AccountId: Ben), default);
+
+        await Ask(Pipeline, Cy);
+        await Ask(Budget, Cy);
+        await Ask(Pipeline, Ben);
+        await Get<IAi>().CompleteAsync(new AiRequest("smart", AiMessages.User("Short.")) { ScopeId = Pipeline, AccountId = Cy, DataClass = AiDataClasses.Public, MaxTokens = 3 });
+        Assert.Equal([15, 10, 4, 3], script.Calls.Select(c => c.MaxTokens));
+        Assert.Equal(10, script.Calls[1].Request!.MaxTokens);
+        Assert.True(await Db(db => db.AiUsage.AllAsync(r => r.OutputTokens <= 15)));
+
+        AiLimitInfo cap = (await admin.ListLimitsAsync(SiteAdmin, null, default)).First(l => l.Kind == AiLimitKinds.CallTokens && l.AccountId is null);
+        Assert.Equal(("", AiLimitMeasures.Tokens, 15m), (cap.Period, cap.Measure, cap.Amount));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.SetLimitAsync(SiteAdmin, null, new AiLimitInput(AiLimitKinds.CallTokens, AiPeriods.Day, 15), default));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.SetLimitAsync(SiteAdmin, null, new AiLimitInput(AiLimitKinds.CallTokens, "", 0.5m), default));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.SetLimitAsync(SiteAdmin, null, new AiLimitInput(AiLimitKinds.Total, AiPeriods.Day, 1)
+            { Measure = "words" }, default));
+    }
+
+    [Fact]
+    public async Task Admins_hear_when_a_token_limit_reaches_its_notice_mark()
+    {
+        int perCall = await TokensOfOneCallAsync();
+        await Get<AiAdminService>().SetLimitAsync(FinanceAdmin, Finance, new AiLimitInput(AiLimitKinds.Total, AiPeriods.Month, perCall * 3 + perCall / 5)
+            { Measure = AiLimitMeasures.Tokens }, default);
+        await Ask(Budget, Ben);
+        await Ask(Budget, Ben);
+        Assert.Empty(_notices.Heard);
+
+        await Ask(Budget, Ben);
+        AiLimitNotice notice = Assert.Single(_notices.Heard);
+        Assert.Equal((AiLimitMeasures.Tokens, (decimal)perCall * 3), (notice.Limit.Measure, notice.Limit.Spent));
+        Assert.Equal(AiLimitMeasures.Tokens, (await Assert.ThrowsAsync<AiRefusedException>(() => Ask(Budget, Ben))).Limit!.Measure);
+    }
+
+    /// <summary>The tokens a call of <see cref="Ask"/> takes, in and out, from a call on the site (which no scope's limit counts).</summary>
+    private async Task<int> TokensOfOneCallAsync()
+    {
+        AiReply probe = await Ask(null, Cy);
+        AiUsageRecord record = await Db(db => db.AiUsage.SingleAsync(r => r.Id == probe.UsageId));
+        Assert.Equal(record.ReservedTokens, record.InputTokens + record.OutputTokens);
+        return record.InputTokens + record.OutputTokens;
+    }
+
     // AI3 -----------------------------------------------------------------------------------------------------------
 
     [Fact]

@@ -156,6 +156,13 @@ namespace AbpAi.SampleHost.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<string>("Measure")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("cost");
+
                     b.Property<string>("Period")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -166,10 +173,10 @@ namespace AbpAi.SampleHost.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ScopeId", "Kind", "Period", "AccountId", "GroupId")
+                    b.HasIndex("ScopeId", "Kind", "Measure", "Period", "AccountId", "GroupId")
                         .IsUnique();
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("ScopeId", "Kind", "Period", "AccountId", "GroupId"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("ScopeId", "Kind", "Measure", "Period", "AccountId", "GroupId"), false);
 
                     b.ToTable("limits", "ai");
                 });
@@ -330,6 +337,11 @@ namespace AbpAi.SampleHost.Migrations
                     b.Property<decimal>("Reserved")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");
+
+                    b.Property<int>("ReservedTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
 
                     b.Property<Guid?>("ScopeId")
                         .HasColumnType("uuid");

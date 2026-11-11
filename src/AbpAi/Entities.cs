@@ -118,34 +118,61 @@ public static class AiLimitKinds
     /// <summary>What each member of a group may spend, in place of <see cref="Person"/>; the most generous of a person's groups.</summary>
     public const string Group = "group";
 
-    public static readonly IReadOnlyList<string> All = [Total, Person, Account, Group];
+    /// <summary>
+    /// The most tokens one reply may have, with no period: set on the site, a scope, or an account (with or without a
+    /// scope). A call's <c>MaxTokens</c> is cut to the lowest that applies before it's estimated.
+    /// </summary>
+    public const string CallTokens = "call-tokens";
+
+    public static readonly IReadOnlyList<string> All = [Total, Person, Account, Group, CallTokens];
 }
 
-/// <summary>The periods a limit is over, in UTC: a day, a week from Monday, a month from its first.</summary>
+/// <summary>What a limit counts.</summary>
+public static class AiLimitMeasures
+{
+    /// <summary>What calls cost, in the connections' price units.</summary>
+    public const string Cost = "cost";
+
+    /// <summary>Tokens in and out.</summary>
+    public const string Tokens = "tokens";
+
+    /// <summary>Calls.</summary>
+    public const string Requests = "requests";
+
+    public static readonly IReadOnlyList<string> All = [Cost, Tokens, Requests];
+}
+
+/// <summary>The periods a limit is over, in UTC: a minute from its start, a day, a week from Monday, a month from its first.</summary>
 public static class AiPeriods
 {
+    public const string Minute = "minute";
     public const string Day = "day";
     public const string Week = "week";
     public const string Month = "month";
 
-    public static readonly IReadOnlyList<string> All = [Day, Week, Month];
+    public static readonly IReadOnlyList<string> All = [Minute, Day, Week, Month];
 
     public static (DateTime Start, DateTime End) Of(string period, DateTime now)
     {
         DateTime day = DateTime.SpecifyKind(now.Date, DateTimeKind.Utc);
         DateTime monday = day.AddDays(-(((int)day.DayOfWeek + 6) % 7));
         DateTime first = new(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        DateTime minute = new(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
         return period switch
         {
+            Minute => (minute, minute.AddMinutes(1)),
             Day => (day, day.AddDays(1)),
             Week => (monday, monday.AddDays(7)),
             Month => (first, first.AddMonths(1)),
-            _ => throw new ArgumentOutOfRangeException(nameof(period), period, "A period is day, week or month."),
+            _ => throw new ArgumentOutOfRangeException(nameof(period), period, "A period is minute, day, week or month."),
         };
     }
 }
 
-/// <summary>A limit on spending (in the connections' price units) over a period, on the site or a scope.</summary>
+/// <summary>
+/// A limit on what calls cost, their tokens or their number (<see cref="Measure"/>) over a period, on the site or a scope;
+/// or (<see cref="AiLimitKinds.CallTokens"/>) the most tokens one reply may have.
+/// </summary>
 public class AiLimit : Entity<Guid>
 {
     protected AiLimit()
@@ -174,9 +201,13 @@ public class AiLimit : Entity<Guid>
     /// <summary>For <see cref="AiLimitKinds.Group"/>.</summary>
     public Guid? GroupId { get; private set; }
 
-    /// <summary>One of <see cref="AiPeriods"/>.</summary>
+    /// <summary>One of <see cref="AiPeriods"/>; empty for <see cref="AiLimitKinds.CallTokens"/>.</summary>
     public string Period { get; private set; } = "";
 
+    /// <summary>What it counts: one of <see cref="AiLimitMeasures"/>, <see cref="AiLimitMeasures.Cost"/> unless it says.</summary>
+    public string Measure { get; init; } = AiLimitMeasures.Cost;
+
+    /// <summary>How much, in the measure's units: cost in price units, tokens, or calls.</summary>
     public decimal Amount { get; set; }
 
     public DateTime CreatedAt { get; private set; }
@@ -263,6 +294,9 @@ public class AiUsageRecord : Entity<Guid>
 
     /// <summary>The estimate held before the call.</summary>
     public decimal Reserved { get; private set; }
+
+    /// <summary>The estimate's tokens (in, and all of its <c>MaxTokens</c> out), held against token limits while it's reserved.</summary>
+    public int ReservedTokens { get; init; }
 
     /// <summary>What it cost: the estimate while reserved, then the cost, or nothing when it failed.</summary>
     public decimal Cost { get; set; }

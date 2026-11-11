@@ -6,7 +6,12 @@ using Volo.Abp.DependencyInjection;
 namespace AbpAi;
 
 /// <summary>A call about to leave: what was asked, where it goes, its class and its estimate.</summary>
-public sealed record AiCall(AiRequest Request, AiScopeChain Chain, AiRoute Route, string DataClass, decimal Estimate, bool Streamed);
+/// <param name="Estimate">What it may cost at most, in price units.</param>
+public sealed record AiCall(AiRequest Request, AiScopeChain Chain, AiRoute Route, string DataClass, decimal Estimate, bool Streamed)
+{
+    /// <summary>The tokens it may take at most: its text's in, and all of its <c>MaxTokens</c> out.</summary>
+    public int EstimatedTokens { get; init; }
+}
 
 /// <summary>A limit a call was checked against, with what was spent before it.</summary>
 public sealed record AiCheckedLimit(AiLimitRef Limit);
@@ -17,13 +22,29 @@ public sealed record AiReservation(Guid UsageId, IReadOnlyList<AiCheckedLimit> L
 /// <summary>
 /// The usage ledger. Before a call leaves, its estimate is reserved under one lock, so calls at the same time can't
 /// go over a limit together: the call must fit its scope's total and every total above it (the site's too), the
-/// named limits of the accounts in it, and what its person may spend at each of those levels. After it answers, the
-/// record is settled with what it cost, and admins hear when a limit passes its notice mark.
+/// named limits of the accounts in it, and what its person may spend at each of those levels, in each measure (cost,
+/// tokens, calls) and period. After it answers, the record is settled with what it cost, and admins hear when a limit
+/// passes its notice mark.
 /// </summary>
 public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices, IOptions<AiOptions> options, ILogger<AiLedger> logger) : ITransientDependency
 {
     /// <summary>The ledger's lock (a Postgres advisory lock): "AI LEDGR" in hex.</summary>
     public const long LockKey = 0x4149_204C_4544_4752;
+
+    /// <summary>
+    /// The most tokens a reply may have for the call: the lowest <see cref="AiLimitKinds.CallTokens"/> on the site, on its
+    /// scope or one above it, or on its account or the person it's for; null when none is set.
+    /// </summary>
+    public async Task<int?> CallTokensAsync(AiRequest request, AiScopeChain chain, CancellationToken ct)
+    {
+        Guid? account = request.AccountId, person = request.OnBehalfOf ?? request.AccountId;
+        List<Guid> ids = [.. chain.Up];
+        List<decimal> caps = await aiDb.RunAsync(db => db.AiLimits.AsNoTracking()
+            .Where(l => l.Kind == AiLimitKinds.CallTokens && (l.ScopeId == null || ids.Contains(l.ScopeId.Value))
+                && (l.AccountId == null || l.AccountId == account || l.AccountId == person))
+            .Select(l => l.Amount).ToListAsync(ct), cancellationToken: ct);
+        return caps.Count == 0 ? null : (int)Math.Clamp(caps.Min(), 1, int.MaxValue);
+    }
 
     public async Task<AiReservation> ReserveAsync(AiCall call, CancellationToken ct)
     {
@@ -40,28 +61,32 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
         {
             await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", [LockKey], ct);
 
-            List<AiLimit> set = await db.AiLimits.AsNoTracking().Where(l => l.ScopeId == null || ids.Contains(l.ScopeId.Value)).ToListAsync(ct);
+            List<AiLimit> set = await db.AiLimits.AsNoTracking().Where(l => l.Kind != AiLimitKinds.CallTokens && (l.ScopeId == null || ids.Contains(l.ScopeId.Value)))
+                .ToListAsync(ct);
             List<(AiLimit Limit, Guid? Whose)> applicable = [];
             foreach (Guid? level in levels)
             {
                 foreach (string period in AiPeriods.All)
                 {
-                    List<AiLimit> here = [.. set.Where(l => l.ScopeId == level && l.Period == period)];
-                    applicable.AddRange(here.Where(l => l.Kind == AiLimitKinds.Total).Select(l => (l, (Guid?)null)));
-                    if (person is not null)
+                    foreach (string measure in AiLimitMeasures.All)
                     {
-                        AiLimit? own = here.FirstOrDefault(l => l.Kind == AiLimitKinds.Account && l.AccountId == person)
-                            ?? here.Where(l => l.Kind == AiLimitKinds.Group && l.GroupId is not null && groups.Contains(l.GroupId.Value)).MaxBy(l => l.Amount)
-                            ?? here.FirstOrDefault(l => l.Kind == AiLimitKinds.Person);
-                        if (own is not null)
+                        List<AiLimit> here = [.. set.Where(l => l.ScopeId == level && l.Period == period && l.Measure == measure)];
+                        applicable.AddRange(here.Where(l => l.Kind == AiLimitKinds.Total).Select(l => (l, (Guid?)null)));
+                        if (person is not null)
                         {
-                            applicable.Add((own, person));
+                            AiLimit? own = here.FirstOrDefault(l => l.Kind == AiLimitKinds.Account && l.AccountId == person)
+                                ?? here.Where(l => l.Kind == AiLimitKinds.Group && l.GroupId is not null && groups.Contains(l.GroupId.Value)).MaxBy(l => l.Amount)
+                                ?? here.FirstOrDefault(l => l.Kind == AiLimitKinds.Person);
+                            if (own is not null)
+                            {
+                                applicable.Add((own, person));
+                            }
                         }
-                    }
 
-                    if (account is not null && here.FirstOrDefault(l => l.Kind == AiLimitKinds.Account && l.AccountId == account) is { } named)
-                    {
-                        applicable.Add((named, account));
+                        if (account is not null && here.FirstOrDefault(l => l.Kind == AiLimitKinds.Account && l.AccountId == account) is { } named)
+                        {
+                            applicable.Add((named, account));
+                        }
                     }
                 }
             }
@@ -83,10 +108,22 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
                     counted = counted.Where(r => r.AccountId == who || r.OnBehalfOf == who);
                 }
 
-                decimal spent = await counted.SumAsync(r => r.Cost, ct);
-                AiLimitRef found = new(limit.Id, KindOf(limit), limit.ScopeId, whose, limit.Period, limit.Amount, spent, end);
+                // A reservation holds its estimate; a settled call what it took.
+                decimal spent = limit.Measure switch
+                {
+                    AiLimitMeasures.Tokens => await counted.SumAsync(r => r.State == AiUsageStates.Reserved ? (long)r.ReservedTokens : (long)r.InputTokens + r.OutputTokens, ct),
+                    AiLimitMeasures.Requests => await counted.CountAsync(ct),
+                    _ => await counted.SumAsync(r => r.Cost, ct),
+                };
+                decimal adds = limit.Measure switch
+                {
+                    AiLimitMeasures.Tokens => call.EstimatedTokens,
+                    AiLimitMeasures.Requests => 1,
+                    _ => call.Estimate,
+                };
+                AiLimitRef found = new(limit.Id, KindOf(limit), limit.ScopeId, whose, limit.Period, limit.Amount, spent, end) { Measure = limit.Measure };
                 checkedLimits.Add(new AiCheckedLimit(found));
-                if (spent + call.Estimate > limit.Amount && (over is null || found.FreesAt > over.FreesAt))
+                if (spent + adds > limit.Amount && (over is null || found.FreesAt > over.FreesAt))
                 {
                     over = found;
                 }
@@ -102,6 +139,7 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
             {
                 AboutKind = request.About?.Kind,
                 AboutId = request.About?.Id,
+                ReservedTokens = call.EstimatedTokens,
             };
             db.AiUsage.Add(record);
             await db.SaveChangesAsync(ct);
@@ -109,7 +147,10 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
         }, requiresNew: true, cancellationToken: ct, isTransactional: true);
     }
 
-    /// <summary>Settles a call with what it cost, and tells admins of each limit it took past the notice mark.</summary>
+    /// <summary>
+    /// Settles a call with what it cost, and tells admins of each limit it took past the notice mark, in the limit's
+    /// measure. A limit over a minute is a rate that frees within it, so no one is told of it.
+    /// </summary>
     public async Task SettleAsync(AiReservation reservation, AiCall call, int inputTokens, int outputTokens, decimal cost, int durationMs, CancellationToken ct)
     {
         await aiDb.RunAsync(async db =>
@@ -124,14 +165,20 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
         }, requiresNew: true, cancellationToken: ct);
 
         decimal mark = options.Value.NoticeAt;
-        foreach (AiCheckedLimit limit in reservation.Limits)
+        foreach (AiCheckedLimit limit in reservation.Limits.Where(l => l.Limit.Period != AiPeriods.Minute))
         {
+            decimal used = limit.Limit.Measure switch
+            {
+                AiLimitMeasures.Tokens => (decimal)inputTokens + outputTokens,
+                AiLimitMeasures.Requests => 1,
+                _ => cost,
+            };
             decimal at = limit.Limit.Amount * mark;
-            if (limit.Limit.Amount > 0 && limit.Limit.Spent < at && limit.Limit.Spent + cost >= at)
+            if (limit.Limit.Amount > 0 && limit.Limit.Spent < at && limit.Limit.Spent + used >= at)
             {
                 try
                 {
-                    await notices.LimitNearingAsync(new AiLimitNotice(limit.Limit with { Spent = limit.Limit.Spent + cost }, call.Chain.Scope, call.Request.AccountId,
+                    await notices.LimitNearingAsync(new AiLimitNotice(limit.Limit with { Spent = limit.Limit.Spent + used }, call.Chain.Scope, call.Request.AccountId,
                         call.Request.Purpose), ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -167,13 +214,21 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
     private static string Describe(AiLimitRef limit)
     {
         string where = limit.ScopeId is null ? "the site's" : "this scope's";
-        string every = limit.Period switch { AiPeriods.Day => "daily", AiPeriods.Week => "weekly", _ => "monthly" };
+        string every = limit.Period switch { AiPeriods.Minute => "per-minute", AiPeriods.Day => "daily", AiPeriods.Week => "weekly", _ => "monthly" };
+        string of = limit.Measure switch { AiLimitMeasures.Tokens => "AI token limit", AiLimitMeasures.Requests => "AI call limit", _ => "AI limit" };
         string what = limit.Kind switch
         {
-            "scope" => $"{where} {every} AI limit",
-            "account" => $"this account's {every} AI limit on {where[..^2]}",
-            _ => $"your {every} AI limit on {where[..^2]}",
+            "scope" => $"{where} {every} {of}",
+            "account" => $"this account's {every} {of} on {where[..^2]}",
+            _ => $"your {every} {of} on {where[..^2]}",
         };
-        return $"{char.ToUpperInvariant(what[0])}{what[1..]} is reached ({limit.Spent:0.####} of {limit.Amount:0.####}). It frees at {limit.FreesAt:yyyy-MM-dd HH:mm} UTC.";
+        string amounts = limit.Measure switch
+        {
+            AiLimitMeasures.Tokens => $"{limit.Spent:0} of {limit.Amount:0} tokens",
+            AiLimitMeasures.Requests => $"{limit.Spent:0} of {limit.Amount:0} calls",
+            _ => $"{limit.Spent:0.####} of {limit.Amount:0.####}",
+        };
+        string frees = limit.Period == AiPeriods.Minute ? $"{limit.FreesAt:HH:mm:ss}" : $"{limit.FreesAt:yyyy-MM-dd HH:mm}";
+        return $"{char.ToUpperInvariant(what[0])}{what[1..]} is reached ({amounts}). It frees at {frees} UTC.";
     }
 }

@@ -89,8 +89,9 @@ public static class AiModel
             b.Property(x => x.Id).ValueGeneratedNever();
             b.Property(x => x.Kind).HasMaxLength(16).IsRequired();
             b.Property(x => x.Period).HasMaxLength(16).IsRequired();
+            b.Property(x => x.Measure).HasMaxLength(16).IsRequired().HasDefaultValue(AiLimitMeasures.Cost);
             b.Property(x => x.Amount).HasPrecision(18, 6);
-            b.HasIndex(x => new { x.ScopeId, x.Kind, x.Period, x.AccountId, x.GroupId }).IsUnique().AreNullsDistinct(false);
+            b.HasIndex(x => new { x.ScopeId, x.Kind, x.Measure, x.Period, x.AccountId, x.GroupId }).IsUnique().AreNullsDistinct(false);
         });
 
         builder.Entity<AiUsageRecord>(b =>
@@ -108,6 +109,7 @@ public static class AiModel
             b.Property(x => x.Model).HasMaxLength(200).IsRequired();
             b.Property(x => x.DataClass).HasMaxLength(64).IsRequired();
             b.Property(x => x.Reserved).HasPrecision(18, 6);
+            b.Property(x => x.ReservedTokens).HasDefaultValue(0);
             b.Property(x => x.Cost).HasPrecision(18, 6);
             b.Property(x => x.Error).HasMaxLength(1000);
             b.HasIndex(x => x.At);

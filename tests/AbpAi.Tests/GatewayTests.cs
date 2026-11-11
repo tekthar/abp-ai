@@ -30,13 +30,14 @@ public class GatewayTests
     }
 
     [Fact]
-    public void Periods_start_at_midnight_on_Monday_and_on_the_first()
+    public void Periods_start_at_the_minute_at_midnight_on_Monday_and_on_the_first()
     {
         DateTime thursday = new(2026, 11, 12, 15, 30, 0, DateTimeKind.Utc);
         Assert.Equal((new DateTime(2026, 11, 12), new DateTime(2026, 11, 13)), AiPeriods.Of(AiPeriods.Day, thursday));
         Assert.Equal((new DateTime(2026, 11, 9), new DateTime(2026, 11, 16)), AiPeriods.Of(AiPeriods.Week, thursday));
         Assert.Equal((new DateTime(2026, 11, 1), new DateTime(2026, 12, 1)), AiPeriods.Of(AiPeriods.Month, thursday));
         Assert.Equal(new DateTime(2026, 11, 9), AiPeriods.Of(AiPeriods.Week, new DateTime(2026, 11, 15, 23, 0, 0, DateTimeKind.Utc)).Start);
+        Assert.Equal((new DateTime(2026, 11, 12, 15, 30, 0), new DateTime(2026, 11, 12, 15, 31, 0)), AiPeriods.Of(AiPeriods.Minute, thursday.AddSeconds(42)));
     }
 
     [Fact]

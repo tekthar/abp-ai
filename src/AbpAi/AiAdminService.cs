@@ -59,10 +59,20 @@ public sealed record AiConnectionInfo(Guid Id, Guid? ScopeId, string Name, strin
 
 public sealed record AiAliasInfo(Guid Id, Guid? ScopeId, string Name, IReadOnlyList<AiAliasTarget> Targets, DateTime UpdatedAt);
 
-/// <summary>A limit as an admin sets it: its kind (<see cref="AiLimitKinds"/>), period, amount, and whose for <c>account</c> or <c>group</c>.</summary>
-public sealed record AiLimitInput(string Kind, string Period, decimal Amount, Guid? AccountId = null, Guid? GroupId = null);
+/// <summary>
+/// A limit as an admin sets it: its kind (<see cref="AiLimitKinds"/>), period (none for <c>call-tokens</c>), amount, whose
+/// for <c>account</c> or <c>group</c> (and, for <c>call-tokens</c>, an account when it's one account's), and what it counts.
+/// </summary>
+public sealed record AiLimitInput(string Kind, string Period, decimal Amount, Guid? AccountId = null, Guid? GroupId = null)
+{
+    /// <summary>What it counts: <c>cost</c>, <c>tokens</c> or <c>requests</c> (<see cref="AiLimitMeasures"/>); <c>call-tokens</c> counts tokens.</summary>
+    public string Measure { get; init; } = AiLimitMeasures.Cost;
+}
 
-public sealed record AiLimitInfo(Guid Id, Guid? ScopeId, string Kind, string Period, decimal Amount, Guid? AccountId, Guid? GroupId);
+public sealed record AiLimitInfo(Guid Id, Guid? ScopeId, string Kind, string Period, decimal Amount, Guid? AccountId, Guid? GroupId)
+{
+    public string Measure { get; init; } = AiLimitMeasures.Cost;
+}
 
 /// <summary>
 /// The admin API: the site's settings, and connections, aliases and limits on the site or a scope. The site's admins
@@ -348,29 +358,39 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     public async Task<List<AiLimitInfo>> ListLimitsAsync(AiActor actor, Guid? scopeId, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
-        List<AiLimit> found = await aiDb.RunAsync(db => db.AiLimits.AsNoTracking().Where(l => l.ScopeId == scopeId).OrderBy(l => l.Kind).ThenBy(l => l.Period)
-            .ToListAsync(ct), cancellationToken: ct);
+        List<AiLimit> found = await aiDb.RunAsync(db => db.AiLimits.AsNoTracking().Where(l => l.ScopeId == scopeId).OrderBy(l => l.Kind).ThenBy(l => l.Measure)
+            .ThenBy(l => l.Period).ToListAsync(ct), cancellationToken: ct);
         return [.. found.Select(Info)];
     }
 
-    /// <summary>Sets a limit on the site or a scope; one of the same kind, period and whose is changed in place.</summary>
+    /// <summary>
+    /// Sets a limit on the site or a scope; one of the same kind, measure, period and whose is changed in place. A
+    /// <c>call-tokens</c> limit has no period, counts tokens, and is a whole number of them, at least one.
+    /// </summary>
     public async Task<AiLimitInfo> SetLimitAsync(AiActor actor, Guid? scopeId, AiLimitInput input, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
-        if (!AiLimitKinds.All.Contains(input.Kind) || !AiPeriods.All.Contains(input.Period) || input.Amount < 0
-            || (input.Kind == AiLimitKinds.Account) != (input.AccountId is not null) || (input.Kind == AiLimitKinds.Group) != (input.GroupId is not null))
+        bool callTokens = input.Kind == AiLimitKinds.CallTokens;
+        string measure = callTokens ? AiLimitMeasures.Tokens : input.Measure ?? AiLimitMeasures.Cost;
+        string period = callTokens ? "" : input.Period ?? "";
+        bool shaped = AiLimitKinds.All.Contains(input.Kind) && input.Amount >= 0 && (input.Kind == AiLimitKinds.Group) == (input.GroupId is not null)
+            && (callTokens
+                ? string.IsNullOrEmpty(input.Period) && input.Amount >= 1 && input.Amount == decimal.Truncate(input.Amount)
+                : AiPeriods.All.Contains(period) && AiLimitMeasures.All.Contains(measure) && (input.Kind == AiLimitKinds.Account) == (input.AccountId is not null));
+        if (!shaped)
         {
-            throw new UserFriendlyException("A limit is total, person, account (with an account) or group (with a group); over a day, week or month; and not below nothing.",
-                AiErrorCodes.Invalid);
+            throw new UserFriendlyException("A limit is total, person, account (with an account) or group (with a group), of cost, tokens or requests, over a minute, day, "
+                + "week or month, and not below nothing; or call-tokens, the most tokens one reply may have (a whole number, on the site, a scope or an account), "
+                + "with no period.", AiErrorCodes.Invalid);
         }
 
         return await aiDb.RunAsync(async db =>
         {
-            AiLimit? limit = await db.AiLimits.FirstOrDefaultAsync(l => l.ScopeId == scopeId && l.Kind == input.Kind && l.Period == input.Period
+            AiLimit? limit = await db.AiLimits.FirstOrDefaultAsync(l => l.ScopeId == scopeId && l.Kind == input.Kind && l.Measure == measure && l.Period == period
                 && l.AccountId == input.AccountId && l.GroupId == input.GroupId, ct);
             if (limit is null)
             {
-                limit = new AiLimit(Guid.NewGuid(), scopeId, input.Kind, input.Period, input.Amount, input.AccountId, input.GroupId);
+                limit = new AiLimit(Guid.NewGuid(), scopeId, input.Kind, period, input.Amount, input.AccountId, input.GroupId) { Measure = measure };
                 db.AiLimits.Add(limit);
             }
 
@@ -581,5 +601,5 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
     private static AiAliasInfo Info(AiAlias a) => new(a.Id, a.ScopeId, a.Name, a.Targets, a.UpdatedAt);
 
-    private static AiLimitInfo Info(AiLimit l) => new(l.Id, l.ScopeId, l.Kind, l.Period, l.Amount, l.AccountId, l.GroupId);
+    private static AiLimitInfo Info(AiLimit l) => new(l.Id, l.ScopeId, l.Kind, l.Period, l.Amount, l.AccountId, l.GroupId) { Measure = l.Measure };
 }

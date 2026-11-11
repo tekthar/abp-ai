@@ -9,10 +9,11 @@ using Volo.Abp.DependencyInjection;
 namespace AbpAi;
 
 /// <summary>
-/// The gateway (<see cref="IAi"/>). Each call: the alias leads to a model through the call's scope chain; the data
-/// rules choose the first target that may receive the call's class (or refuse, before anything leaves); the ledger
-/// reserves the estimate against every limit that applies; the connection's key is asked of its source; the provider
-/// answers; the record is settled with what it cost; and the prompt is kept only when the site keeps prompts.
+/// The gateway (<see cref="IAi"/>). Each call: its <c>MaxTokens</c> is cut to the lowest per-call limit that applies;
+/// the alias leads to a model through the call's scope chain; the data rules choose the first target that may receive
+/// the call's class (or refuse, before anything leaves); the ledger reserves the estimate against every limit that
+/// applies; the connection's key is asked of its source; the provider answers; the record is settled with what it
+/// cost; and the prompt is kept only when the site keeps prompts.
 /// </summary>
 public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger ledger, AiDb aiDb, IEnumerable<IAiProvider> providers, IAiConnectionSource connections,
     IOptions<AiOptions> options, ILogger<AiService> logger) : IAi, ITransientDependency
@@ -140,11 +141,17 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
         }
 
         AiScopeChain chain = await chains.OfAsync(request.ScopeId, ct);
+        if (await ledger.CallTokensAsync(request, chain, ct) is { } most && most < request.MaxTokens)
+        {
+            request = request with { MaxTokens = most };
+        }
+
         string dataClass = router.ClassOf(request.DataClass);
         AiRoute route = await router.ChooseAsync(request.Alias, chain, dataClass, AiNeeds.Of(request), ct);
         IAiProvider provider = providers.LastOrDefault(p => string.Equals(p.Kind, route.Connection.Provider, StringComparison.OrdinalIgnoreCase))
             ?? throw new AiRefusedException(AiRefusalCodes.NoModel, $"No provider \"{route.Connection.Provider}\" is installed for {route.Connection.Name}.");
-        return (new AiCall(request, chain, route, dataClass, Estimate(request, route), streamed), provider);
+        (decimal cost, int tokens) = Estimate(request, route);
+        return (new AiCall(request, chain, route, dataClass, cost, streamed) { EstimatedTokens = tokens }, provider);
     }
 
     /// <summary>The call as its provider gets it, with the connection's key: asked of the source only now, as the call goes out.</summary>
@@ -164,13 +171,14 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
         };
     }
 
-    /// <summary>A call's estimate before it leaves: its text's tokens in, and all its MaxTokens out.</summary>
-    private decimal Estimate(AiRequest request, AiRoute route)
+    /// <summary>A call's estimate before it leaves: its text's tokens in, and all its MaxTokens out; what they cost, and how many.</summary>
+    private (decimal Cost, int Tokens) Estimate(AiRequest request, AiRoute route)
     {
         int perToken = Math.Max(1, options.Value.CharsPerToken);
         long chars = request.Messages.GetRawText().Length + SystemChars(request.System, request.SystemBlocks) + (request.Tools?.GetRawText().Length ?? 0)
             + (request.OutputSchema?.GetRawText().Length ?? 0);
-        return Cost(route, (int)Math.Min(int.MaxValue, chars / perToken + 1), request.MaxTokens);
+        int input = (int)Math.Min(int.MaxValue, chars / perToken + 1);
+        return (Cost(route, input, request.MaxTokens), (int)Math.Min(int.MaxValue, (long)input + request.MaxTokens));
     }
 
     /// <summary>The length of a call's system prompt: its blocks as JSON when it gives them, else its text.</summary>

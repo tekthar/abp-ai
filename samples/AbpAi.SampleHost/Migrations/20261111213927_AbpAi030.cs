@@ -11,6 +11,19 @@ namespace AbpAi.SampleHost.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropIndex(
+                name: "IX_limits_ScopeId_Kind_Period_AccountId_GroupId",
+                schema: "ai",
+                table: "limits");
+
+            migrationBuilder.AddColumn<int>(
+                name: "ReservedTokens",
+                schema: "ai",
+                table: "usage",
+                type: "integer",
+                nullable: false,
+                defaultValue: 0);
+
             migrationBuilder.AddColumn<string>(
                 name: "ScopeAccess",
                 schema: "ai",
@@ -19,6 +32,15 @@ namespace AbpAi.SampleHost.Migrations
                 maxLength: 16,
                 nullable: false,
                 defaultValue: "open");
+
+            migrationBuilder.AddColumn<string>(
+                name: "Measure",
+                schema: "ai",
+                table: "limits",
+                type: "character varying(16)",
+                maxLength: 16,
+                nullable: false,
+                defaultValue: "cost");
 
             migrationBuilder.AddColumn<string>(
                 name: "ModelSettings",
@@ -43,6 +65,14 @@ namespace AbpAi.SampleHost.Migrations
                 {
                     table.PrimaryKey("PK_scope_access", x => x.Id);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_limits_ScopeId_Kind_Measure_Period_AccountId_GroupId",
+                schema: "ai",
+                table: "limits",
+                columns: new[] { "ScopeId", "Kind", "Measure", "Period", "AccountId", "GroupId" },
+                unique: true)
+                .Annotation("Npgsql:NullsDistinct", false);
         }
 
         /// <inheritdoc />
@@ -52,15 +82,38 @@ namespace AbpAi.SampleHost.Migrations
                 name: "scope_access",
                 schema: "ai");
 
+            migrationBuilder.DropIndex(
+                name: "IX_limits_ScopeId_Kind_Measure_Period_AccountId_GroupId",
+                schema: "ai",
+                table: "limits");
+
+            migrationBuilder.DropColumn(
+                name: "ReservedTokens",
+                schema: "ai",
+                table: "usage");
+
             migrationBuilder.DropColumn(
                 name: "ScopeAccess",
                 schema: "ai",
                 table: "site");
 
             migrationBuilder.DropColumn(
+                name: "Measure",
+                schema: "ai",
+                table: "limits");
+
+            migrationBuilder.DropColumn(
                 name: "ModelSettings",
                 schema: "ai",
                 table: "connections");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_limits_ScopeId_Kind_Period_AccountId_GroupId",
+                schema: "ai",
+                table: "limits",
+                columns: new[] { "ScopeId", "Kind", "Period", "AccountId", "GroupId" },
+                unique: true)
+                .Annotation("Npgsql:NullsDistinct", false);
         }
     }
 }
