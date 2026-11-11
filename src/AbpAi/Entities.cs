@@ -247,17 +247,21 @@ public class AiUsageRecord : Entity<Guid>
         ScopePath = scopePath;
         AccountId = accountId;
         OnBehalfOf = onBehalfOf;
-        Purpose = purpose;
-        Alias = alias;
+        // Each cut to its column, so a long name or purpose is kept shortened rather than failing the call.
+        Purpose = Cut(purpose, 200);
+        Alias = Cut(alias, 100);
         ConnectionId = connectionId;
-        Connection = connection;
-        Provider = provider;
-        Model = model;
-        DataClass = dataClass;
+        Connection = Cut(connection, 100);
+        Provider = Cut(provider, 64);
+        Model = Cut(model, 200);
+        DataClass = Cut(dataClass, 64);
         Reserved = reserved;
         Cost = reserved;
         Streamed = streamed;
     }
+
+    /// <summary>A value as long as its column holds; the call is recorded with it shortened.</summary>
+    public static string Cut(string value, int max) => value.Length > max ? value[..max] : value;
 
     public DateTime At { get; private set; }
 

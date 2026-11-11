@@ -137,8 +137,8 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
             AiUsageRecord record = new(Guid.NewGuid(), now, call.Chain.Scope, call.Chain.Path, request.AccountId, request.OnBehalfOf, request.Purpose, call.Route.Alias,
                 call.Route.Connection.Id, call.Route.Connection.Name, call.Route.Connection.Provider, call.Route.Model, call.DataClass, call.Estimate, call.Streamed)
             {
-                AboutKind = request.About?.Kind,
-                AboutId = request.About?.Id,
+                AboutKind = request.About?.Kind is { } kind ? AiUsageRecord.Cut(kind, 128) : null,
+                AboutId = request.About?.Id is { } about ? AiUsageRecord.Cut(about, 128) : null,
                 ReservedTokens = call.EstimatedTokens,
             };
             db.AiUsage.Add(record);

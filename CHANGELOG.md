@@ -56,6 +56,31 @@ What a product with a gateway of its own needs to move onto AbpAi, the product t
 - An alias's target that names a model by its name is kept by its id.
 - `AbpAiModule.Version` is `0.3.0` (0.2.0 said `0.1.0`).
 
+### Fixed
+
+- A usage row cuts a long purpose, alias, connection, provider, model or data class to its column, so the call is
+  recorded with the name shortened instead of failing with a database error.
+
+### Known gaps
+
+Found moving the first product onto 0.3.0; each is worked around by that host and is for a later version:
+
+- The demo provider streams text only in whole pieces: no citations, tool input in one delta, no thinking deltas, no
+  pacing, and its model id is always `demo`. A host that needs the Messages API's full stream registers its own `demo`
+  provider after AbpAi's (the last provider of a kind wins).
+- A call refused over a limit keeps no usage row, and `AiUsageStates` has no refused state; `AiUsageService` has no
+  refused or failed counts and no recent-calls list.
+- `IAiNotices` is told at 80% only, not when a limit is reached.
+- Model capabilities always decide which models may answer (`AiModelSettings.Images` defaults to false). A host whose
+  own flags are advisory says every model can.
+- `ConfigureAi` names the connections' key `PK_connections`, which clashes with a host's own `connections` table; such
+  a host names it in its model (`HasName("PK_ai_connections")`).
+- A scope's admins can't set an account's own limit through `AiAdminService`; a host where they may writes the table.
+- `AiChoice.Provider` is the provider's kind, not the host's own name for the connection's type.
+- An invalid request (no messages, `MaxTokens` not above 0) throws `ArgumentException` rather than refusing.
+- The OpenAI-compatible provider drops `search_result` blocks from user content, and a provider error shows the raw
+  response body rather than its `error.message`.
+
 ## [0.2.0] - 2026-11-10
 
 The first release, at the same version as AbpGuard and AbpAgent.
