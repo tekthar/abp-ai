@@ -6,6 +6,11 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-13
+
+What an agent's memory and live chats need: embeddings through the gateway, and AbpAgent's streamed turns. No new
+tables or columns: a host on 0.4.0 needs no migration.
+
 ### Added
 
 - **Embeddings:** `IAi.EmbedAsync(AiEmbedRequest)` (a default interface method, so a host's own `IAi` still builds):
