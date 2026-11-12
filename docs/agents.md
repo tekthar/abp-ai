@@ -14,8 +14,17 @@ Two things AbpAgent's request doesn't carry yet; give `IAiAgentCalls` to supply 
 - **The data class** the conversation carries: Insight's comes from the model set's policy. With none, the call
   counts as the highest class and goes only where everything may.
 
-A refusal ends the run with the gateway's code (`no_model`, `over_limit`, `data_not_allowed`, `provider`) as
-`AgentModelRefusedException`.
+`IAiAgentCalls` also says how the agent's turns are made (`AiAgentCallInfo`):
+
+- **`Cache`**, on by default: the provider may cache each turn's start, since a run re-sends its conversation every turn.
+  Anthropic is told where; OpenAI-compatible providers cache without being told. Cached tokens are counted and priced.
+- **`MaxTokens`**: the fewest tokens a turn may answer with, a floor on AbpAgent's per-turn `MaxTokens` (thinking takes
+  room). The per-call limits still cap it.
+- **`ProviderOptions`**: more of the provider's request, such as `thinking`.
+
+A refusal ends the run with the gateway's code (`no_model`, `over_limit`, `data_not_allowed`, `timeout`, `provider`)
+as `AgentModelRefusedException`, and so does a model that declines to answer (its `stop_reason` is `refusal`), with the
+code `refusal`.
 
 Streaming for AbpAgent's live chats (A1) comes when `IAgentModels` has a streaming call; `IAi.StreamAsync` is ready
 for it.

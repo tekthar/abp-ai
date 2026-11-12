@@ -32,14 +32,20 @@ public class MyDbContext : AbpDbContext<MyDbContext>, IAiDbContext
 }
 ```
 
-Your migrations make the tables, in schema `ai`: `connections`, `aliases`, `limits`, `usage`, `prompts`, `site` and
-`scope_access`. (`IAiDbContext.AiScopeAccess` has a default, so a context written for an earlier version needn't name
-it.) The ledger needs PostgreSQL (an advisory lock and a `uuid[]` path with a GIN index).
+Your migrations make the tables, in schema `ai`: `connections`, `aliases`, `limits`, `usage`, `prompts`, `site`,
+`scope_access` and `exports`. (`IAiDbContext.AiScopeAccess` and `AiExports` have defaults, so a context written for an
+earlier version needn't name them.) The connections' and exports' keys are named `PK_ai_connections` and
+`PK_ai_exports`, apart from a host's own `connections` or `exports` table. The ledger needs PostgreSQL (an advisory
+lock and a `uuid[]` path with a GIN index).
+
+Tests of your own on another database (SQLite, EF Core's in-memory one) can't make the gateway's columns: leave its
+tables out of that model with `builder.IgnoreAi()` in place of `ConfigureAi()`, and test what calls models on
+PostgreSQL, as `tests/AbpAi.Host.Tests` does.
 
 On each new version, add a migration as you do for your own model (`dotnet ef migrations add AbpAi030`). The model
 gives each new column a default that keeps what's there working as before: limits count `cost`, the site's scopes are
 `open`, connections' models have no settings. The sample does just this: its `Migrations` folder holds `AbpAi020`
-(0.2.0's tables) and `AbpAi030` (what 0.3.0 adds), and its tests migrate a database of 0.2.0's tables, with a site's
+(0.2.0's tables) and `AbpAi030` (what 0.3.0 adds) and `AbpAi040` (what 0.4.0 adds), and its tests migrate a database of 0.2.0's tables, with a site's
 rows in it, to the latest.
 
 Keys are encrypted with ABP's string encryption: set `StringEncryption:DefaultPassPhrase` to a secret of your own.
@@ -49,9 +55,10 @@ Keys are encrypted with ABP's string encryption: set `StringEncryption:DefaultPa
 | Seam | Give it when | Default |
 |---|---|---|
 | `IAiScopes` | your scopes nest, or you want their names in usage | one level |
-| `IAiRights` | always: who administers the site and each scope | no one |
+| `IAiRights` | always: who administers the site and each scope; who owns the site (`IsSiteOwnerAsync`, for exports of calls); who administers an agent's account (`AdministersAccountAsync`, for its own limits) | no one |
 | `IAiAccounts` | you set limits on groups | no groups |
-| `IAiNotices` | admins should hear of limits nearing somewhere other than the log | the log |
+| `IAiNotices` | admins should hear of limits nearing (`LimitNearingAsync`) and reached (`LimitReachedAsync`) somewhere other than the log | the log |
+| `IAiAudit` | exports of calls should be in your audit log | the log |
 | `IAiConnectionSource` | you keep connections of your own (below) | AbpAi's `connections` table (`StoredAiConnections`) |
 | `IAiProvider` | you need a provider that isn't built in | Anthropic, OpenAI-compatible, demo |
 | `IAiDemoResponder` | your tests answer for the demo model in their own way | `AiScript` |
@@ -68,7 +75,13 @@ chain deeper than `MaxScopeDepth` (32), is refused.
 | `ReservationTimeout` | 00:30:00 | how long a reservation no one settles holds |
 | `CharsPerToken` | 4 | for a call's estimate |
 | `HousekeepingEvery` | 00:10:00 | letting go stale reservations and old prompts |
-| `ProviderTimeout` | 00:10:00 | how long a provider may take (to answer, or to list its models) |
+| `ProviderTimeout` | 00:10:00 | the longest a whole call may take (its total timeout), and a provider to list its models, for a connection that sets none |
+| `IdleTimeout` | 00:01:00 | the longest wait for the next part of a streamed reply, its first included (its idle timeout), for a connection that sets none |
+| `ProviderRetries` | 2 | how many times the built-in providers try again on 429, 500, 502, 503, 504 and 529, before a stream begins |
+| `CapabilitiesDecide` | true | what models can do (tools, images, a schema) decides which may answer; false when your models' flags are only for people to read |
+| `ExportDays` | 7 | how long an export of calls is kept |
+| `MaxExportDays`, `MaxExportCalls`, `MaxExportBytes` | 31, 100,000, 200 MB | the most one export covers and holds |
+| `DemoPacing` | 00:00:00 | the demo model's pause between the pieces of a streamed reply |
 | `MaxScopeDepth` | 32 | the longest scope chain |
 
 The site's own settings (whether scopes may connect, which classes their connections may receive, how scopes use the
@@ -79,14 +92,38 @@ site's models, whether prompts are kept and for how long) are in the database, s
 
 `AiAdminService.CreateConnectionAsync(actor, scopeId, input)`: a name, a provider (`anthropic`, `openai`, `demo`, or a
 host's own kind, which may carry its prefix: `acme:bedrock`), its models (the first that's on is its default), the
-data classes it may receive, labels, prices per million tokens (and per model), whether it follows a schema, its key,
-and its models' settings. Provider settings:
+data classes it may receive, labels, prices per million tokens (and per model; cache writes and reads too, by default
+1.25 times and a tenth of the input price), whether it follows a schema, its key, its models' settings, and its
+timeouts. Provider settings:
 
 | Provider | Endpoint | Settings |
 |---|---|---|
 | `anthropic` | empty for `https://api.anthropic.com`, or a gateway's | `anthropic-version` (2026-10-21), `anthropic-beta`, `auth` = `bearer` |
 | `openai` | the API's base: `https://api.openai.com/v1`, `http://localhost:11434/v1`, `https://{name}.openai.azure.com/openai/deployments/{deployment}` | `api-version` (Azure), `auth` = `api-key` (Azure), `max-tokens-field` |
 | `demo` | none | none |
+
+### Timeouts
+
+Each connection may set two (`IdleTimeoutSeconds`, `TotalTimeoutSeconds`; null keeps what's set, 0 goes back to the
+site's `IdleTimeout` and `ProviderTimeout`):
+
+- **Idle**, 1 second to an hour: the longest wait for the next part of a streamed reply, its first event included. A
+  local model on modest hardware that needs minutes for its first token sets minutes here; a cloud model's connection
+  keeps the site's minute. A call that isn't streamed gets its reply whole, so only its total applies to it.
+- **Total**, 1 second to a day: the longest the whole call may take.
+
+A call that runs out is refused with `timeout`, and `AiRefusedException.TimedOut` says which (`idle`, `total`); a
+stream ends with it. Its usage row is `failed`, with code `timeout`, at no cost. A host that keeps its own connections
+gives them in `AiConnectionDescriptor.IdleTimeout` and `TotalTimeout`.
+
+### Testing a connection
+
+`AiAdminService.TestConnectionAsync(actor, scopeId, connectionId, model)` makes one small call (a few tokens) to the
+model named, else the connection's first that's on, straight to its provider, within its idle timeout and with no
+second try. `AiConnectionTest` says whether it answered and how long it took, or the provider's status and its own
+reason: "invalid x-api-key", "model: claude-x", "It couldn't be reached: …". The key is never in it, nor anything
+shaped like one. Nothing goes on the ledger. Save a connection with `Test = true` and `AiConnectionInfo.Test` carries
+how its test went, so an admin page tests on save; it works for connections a host keeps, too.
 
 ### Models and what they can do
 

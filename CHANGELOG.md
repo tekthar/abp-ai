@@ -6,6 +6,77 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
+What a host needs to run AbpAi in front of people: each connection's timeouts, a test that says why a connection
+fails, an export of calls for support, and everything the first products to move onto 0.3.0 found. A host on 0.3.0
+that changes nothing keeps working once its migration adds 0.4.0's columns and table (`dotnet ef migrations add
+AbpAi040`), with the changes below.
+
+### Added
+
+- **Timeouts per connection (AI6):** an idle timeout (the longest wait for the next part of a streamed reply, its
+  first included; site default `AbpAi:IdleTimeout`, a minute) and a total timeout (site default `ProviderTimeout`, 10
+  minutes), on `AiConnectionInput`/`AiConnectionInfo` (`IdleTimeoutSeconds`, `TotalTimeoutSeconds`; 0 goes back to
+  the site's) and `AiConnectionDescriptor` (`IdleTimeout`, `TotalTimeout`) for connections a host keeps. A call that
+  runs out is refused with the new code `timeout`, and `AiRefusedException.TimedOut` says which (`AiTimeouts.Idle`,
+  `Total`). `AiTimeoutsOf`.
+- **A connection's test (AI7):** `AiAdminService.TestConnectionAsync(actor, scopeId, connectionId, model)`, one small
+  call straight to the provider: `AiConnectionTest` (ok and the time taken, or the provider's status and its own
+  reason, never the key). `AiConnectionInput.Test` tests on save, into `AiConnectionInfo.Test`.
+- **An export of calls for support (AI8):** `AiExportService` (`CreateAsync`, `ListAsync`, `DownloadAsync`,
+  `DeleteAsync`): the site's owner only (`IAiRights.IsSiteOwnerAsync`, by default no one), each one told to the audit
+  log first (`IAiAudit`, `AiAuditActions`; the default writes to the log), JSON lines gzipped, prompts and replies
+  only where the site kept them, deleted after `AbpAi:ExportDays` (7). Table `exports`; `AiExport`.
+- **Prompt caching:** `AiRequest.Cache` (and `AiProviderCall.Cache`): Anthropic marks the last system block and the
+  last message's last block, unless the call marked its own. Cached tokens are read from both built-in providers
+  (Anthropic's `cache_creation_input_tokens` and `cache_read_input_tokens`; OpenAI's `cached_tokens`, taken out of its
+  prompt tokens) into `AiProviderReply`, `AiUsage`, the ledger (`CacheWriteTokens`, `CacheReadTokens`) and usage
+  reports, and priced (`AiPrice.CacheWrite`, `CacheRead`, by default 1.25 times and a tenth of the input price;
+  `CacheWritePrice`, `CacheReadPrice` on a connection). Token limits count every token.
+- **Retries:** the built-in providers try again on 429, 500, 502, 503, 504 and 529, and when the provider can't be
+  reached, after its `retry-after` (at most 30 seconds) or a short wait that doubles: `AbpAi:ProviderRetries` (2),
+  `AiProviderCall.Retries`, never once a stream has begun. `ProviderHttp` is public, for a host's own providers.
+- **Refusals on the ledger:** a call refused before it leaves (a limit, no model, the data rules) is kept as
+  `AiUsageStates.Refused`, at no cost, with its code (`AiUsageRecord.Code`, also set on failed calls) and words.
+  Usage rows count `Failed` and `Refused` beside `Calls`; `AiUsageService.RecentAsync` and `MineRecentAsync` list the
+  calls themselves, filtered by state (`AiUsageQuery.States`); `AiCallRow`.
+- **A limit reached:** `IAiNotices.LimitReachedAsync` (a default interface method that does nothing), told once in
+  each of a limit's periods, when a call takes it to its amount or it refuses one. `AiLimit.ReachedNoticeFor`.
+- **An agent's own limits:** `AiAdminService.ListAccountLimitsAsync`, `SetAccountLimitAsync` (`account` or
+  `call-tokens`, on the site) and `DeleteLimitAsync`, for the site's admins and the account's
+  (`IAiRights.AdministersAccountAsync`, by default no one).
+- **Agents:** `AiAgentCallInfo.Cache` (on by default), `MaxTokens` (a floor on each turn's) and `ProviderOptions`; a
+  reply whose `stop_reason` is `refusal` ends the run with the code `refusal` (`AiAgentModels.RefusalStop`).
+- `AiConnectionDescriptor.Type` and `AiChoice.ConnectionType`: the host's own name for a connection's type.
+- `AiOptions.CapabilitiesDecide` (true): false lets a host whose models' flags are only for people to read have
+  models chosen by alias, access and being on.
+- `AiModel.IgnoreAi()`: leaves the gateway's tables out of a model, for a host's tests on SQLite or in memory.
+- `AiOptions.DemoPacing`; `DemoProvider.Events` is public. `AiProviderException.Reason`.
+
+### Changed
+
+- A call that can't be made as it's asked (no alias, no messages, `MaxTokens` not above 0, system blocks or provider
+  options of the wrong shape) is refused with `AiRefusalCodes.Invalid` (`AiRefusedException`) rather than throwing
+  `ArgumentException`.
+- A streamed call is bounded by its total timeout too; before, only a call that wasn't streamed was. A stream longer
+  than 10 minutes needs its connection's `TotalTimeoutSeconds` raised.
+- A provider's error says the provider's own reason (its `error.message`) rather than the start of its body, with the
+  key and anything shaped like one read `[key]`.
+- The demo model's reply names the model the call went to and carries its usage; its stream comes in small pieces,
+  thinking, signatures, citations and a tool's input included.
+- The connections' key is named `PK_ai_connections` (the 0.4.0 migration renames it; a host that already named it so
+  has nothing to do).
+- The usage CSV has two more columns at its end, `cache_write_tokens` and `cache_read_tokens`.
+
+### Fixed
+
+- The OpenAI-compatible provider sends `search_result` blocks, in a user's turn and in a tool's result, as text (their
+  source, title and text) rather than dropping them.
+- A stream's message keeps its citations (`citations_delta`).
+- Every gap 0.3.0's changelog listed is closed.
+
+
 ## [0.3.0] - 2026-11-12
 
 What a product with a gateway of its own needs to move onto AbpAi, the product the gateway came from first

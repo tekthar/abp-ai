@@ -2,8 +2,14 @@
 
 Set up a connection with provider `demo` and point your aliases at it. The demo model answers through
 `IAiDemoResponder`s, first that answers wins; with none answering it says it's the demo model (or answers `{}` when a
-schema was asked for). It counts tokens as the gateway estimates them, never more than `MaxTokens`, and streams like a
-real provider.
+schema was asked for). It counts tokens as the gateway estimates them, never more than `MaxTokens`, names the model the
+call went to, and streams as a model writes: a text block's citations, then its text in small pieces; thinking, then
+its signature; a tool's input in pieces. `AbpAi:DemoPacing` puts a pause between the pieces, so a live view can be
+seen being written (none by default, so tests run at once). `DemoProvider.Events(reply, model)` gives any whole reply
+as those events.
+
+The gateway's tables need PostgreSQL. A host whose own tests run on SQLite or EF Core's in-memory database leaves
+them out of that model with `builder.IgnoreAi()`, and tests what calls models on PostgreSQL.
 
 ## `AiScript`
 

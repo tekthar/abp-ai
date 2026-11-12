@@ -54,8 +54,10 @@ await admin.SetLimitAsync(actor, null, new AiLimitInput(AiLimitKinds.CallTokens,
 Before a call leaves, its estimate is reserved under one lock, so calls at the same time can't go over a limit
 together. The estimate is its text's tokens in (characters over `CharsPerToken`, system blocks counted as they're
 sent) and all of its `MaxTokens` out: in cost at its model's prices, in tokens as they are, and one call. After it
-answers, the record is settled to what it took. A provider's failure costs nothing and isn't counted. A reservation no
-one settles (the server stopped) stops holding after `ReservationTimeout`.
+answers, the record is settled to what it took: its tokens in, written to the provider's cache, read from it, and
+out, at its model's prices for each. Token limits count every one of them. A provider's failure costs nothing and
+isn't counted, nor is a refused call. A reservation no one settles (the server stopped) stops holding after
+`ReservationTimeout`.
 
 A minute is the minute on the clock, not the last sixty seconds: a limit of 30 calls a minute lets 30 through in each
 minute, starting again at the next.
@@ -67,7 +69,20 @@ period, its measure, the amount and what's spent (in the measure's units), and `
 tell the person ("Your per-minute AI call limit on the site is reached (30 of 30 calls). It frees at 10:42:00 UTC.").
 When more than one is reached, the one that frees last is named.
 
+Every refusal before a call leaves (a limit, no model, the data rules) is kept on the ledger as `refused`, at no cost,
+with its code and words, so usage counts refusals too. A call that isn't one the gateway can make (no alias, no
+messages, `MaxTokens` not above 0) is refused with `invalid`, and isn't kept.
+
 ## Notices
 
 When a call takes a limit from below `NoticeAt` (80%) to at or above it, `IAiNotices.LimitNearingAsync` hears once, in
-the limit's own measure. A limit over a minute is a rate that frees within it, so no one is told of it.
+the limit's own measure. When a limit is reached (a call takes it to its amount, or one is refused by it),
+`IAiNotices.LimitReachedAsync` hears, once in each of its periods however many calls it refuses. A limit over a minute
+is a rate that frees within it, so no one is told of it.
+
+## An agent's own limits
+
+An agent's account may have limits of its own on the site, which count its calls everywhere, inside the site's and
+the scopes'. Its admins set them, as the host says who they are (`IAiRights.AdministersAccountAsync`), and so do the
+site's admins: `AiAdminService.ListAccountLimitsAsync(actor, accountId)`, `SetAccountLimitAsync(actor, accountId,
+input)` (`account` over a period, or `call-tokens`) and `DeleteLimitAsync`.
