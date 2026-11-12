@@ -6,6 +6,24 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Embeddings:** `IAi.EmbedAsync(AiEmbedRequest)` (a default interface method, so a host's own `IAi` still builds):
+  vectors for texts, one each, from a model an alias leads to, with the data rules, the limits, the ledger and the
+  connection's total timeout as for any call (`AiEmbedding`, `AiEmbedInputTypes`). Models say they make them
+  (`AiModelSettings.Embeds`; one found on a connection does when its id says `embed`; one with no settings takes
+  everything, as before), and the router chooses for it (`AiNeeds.Embedding`, `AiChoice.Embeds`). Providers:
+  `IAiProvider.CanEmbed` and `EmbedAsync` (default: can't); the OpenAI-compatible one calls `{endpoint}/embeddings`
+  (OpenAI, Azure OpenAI, Ollama, vLLM, Voyage AI; `dimensions`, and `input_type` for a connection whose `input-type`
+  setting is `send`); the demo model gives vectors that are the same for the same text everywhere and near for texts
+  that share words (`DemoProvider.Vector`), so a search by meaning runs in tests. For an agent's memory (graphiti-net
+  through AbpAgent).
+
+### Fixed
+
+- `AiAgentModels` hands AbpAgent every token a turn sent: in, written to the provider's cache and read from it. A
+  run's token total and AbpAgent's token limits undercounted cached turns (the cost was right).
+
 ## [0.4.0] - 2026-11-12
 
 What a host needs to run AbpAi in front of people: each connection's timeouts, a test that says why a connection

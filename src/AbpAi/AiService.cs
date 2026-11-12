@@ -149,6 +149,103 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
         yield return new AiStreamEvent(AiStreamEvent.Done, reply.Message) { Reply = reply };
     }
 
+    /// <summary>The most texts one embedding call takes.</summary>
+    public const int MaxEmbedInputs = 2048;
+
+    private static readonly JsonElement NoMessages = JsonSerializer.SerializeToElement(Array.Empty<object>());
+
+    public async Task<AiEmbedding> EmbedAsync(AiEmbedRequest request, CancellationToken cancellationToken = default)
+    {
+        if (InvalidEmbed(request) is { } why)
+        {
+            throw new AiRefusedException(AiRefusalCodes.Invalid, why);
+        }
+
+        // On the ledger as any call: who, what asked, about what, its class; no messages, nothing out.
+        AiRequest asked = new(request.Alias, NoMessages)
+        {
+            Purpose = request.Purpose, ScopeId = request.ScopeId, AccountId = request.AccountId, OnBehalfOf = request.OnBehalfOf, About = request.About,
+            DataClass = request.DataClass, MaxTokens = 1,
+        };
+        AiScopeChain chain = await chains.OfAsync(request.ScopeId, cancellationToken);
+        string dataClass = router.ClassOf(request.DataClass);
+        AiRoute route;
+        try
+        {
+            route = await router.ChooseAsync(request.Alias, chain, dataClass, AiNeeds.Embedding, cancellationToken);
+        }
+        catch (AiRefusedException refused)
+        {
+            await ledger.RefusedAsync(asked, chain, dataClass, null, false, refused, cancellationToken);
+            throw;
+        }
+
+        IAiProvider? provider = providers.LastOrDefault(p => string.Equals(p.Kind, route.Connection.Provider, StringComparison.OrdinalIgnoreCase));
+        if (provider is not { CanEmbed: true })
+        {
+            AiRefusedException refused = new(AiRefusalCodes.NoModel, provider is null
+                ? $"No provider \"{route.Connection.Provider}\" is installed for {route.Connection.Name}."
+                : $"{route.Connection.Name}'s provider doesn't make embeddings.");
+            await ledger.RefusedAsync(asked, chain, dataClass, route, false, refused, cancellationToken);
+            throw refused;
+        }
+
+        int perToken = Math.Max(1, options.Value.CharsPerToken);
+        int estimated = (int)Math.Min(int.MaxValue, request.Inputs.Sum(i => (long)i.Length / perToken + 1));
+        AiCall call = new(asked, chain, route, dataClass, Cost(route, new AiSettlement(estimated, 0, 0, 0)), false) { EstimatedTokens = estimated };
+        AiReservation reservation = await ReserveAsync(call, cancellationToken);
+        AiTimeoutsOf timeouts = AiTimeoutsOf.For(route.Connection, options.Value);
+        Stopwatch watch = Stopwatch.StartNew();
+        using CancellationTokenSource total = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        total.CancelAfter(timeouts.Total);
+        AiProviderEmbedding answer;
+        try
+        {
+            string? key = await connections.KeyAsync(route.Connection.Id, total.Token);
+            AiTarget target = new(route.Connection.Id, route.Connection.Name, route.Connection.Endpoint, key, route.Model, route.Connection.Settings);
+            answer = await provider.EmbedAsync(new AiEmbedCall(target, request.Inputs)
+            {
+                Dimensions = request.Dimensions, InputType = request.InputType, Purpose = request.Purpose, ScopeId = request.ScopeId, Request = request,
+            }, total.Token);
+            if (answer.Vectors.Count != request.Inputs.Count)
+            {
+                throw new AiProviderException($"{route.Connection.Name} gave {answer.Vectors.Count} vectors for {request.Inputs.Count} texts.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Exception refusal = Refusal(ex, call, cancellationToken, total, null, timeouts);
+            await ledger.FailAsync(reservation, refusal.Message, (int)watch.ElapsedMilliseconds, (refusal as AiRefusedException)?.Code);
+            throw refusal;
+        }
+
+        AiSettlement used = new(answer.InputTokens > 0 ? answer.InputTokens : estimated, 0, 0, 0);
+        decimal cost = Cost(route, used);
+        await ledger.SettleAsync(reservation, call, used, cost, (int)watch.ElapsedMilliseconds, cancellationToken);
+        return new AiEmbedding(answer.Vectors, route.Model, new AiUsage(used.InputTokens, 0, cost)) { UsageId = reservation.UsageId, Connection = route.Connection.Name };
+    }
+
+    /// <summary>Why texts can't be embedded as they're asked; null when they can.</summary>
+    internal static string? InvalidEmbed(AiEmbedRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Alias))
+        {
+            return "A call names an alias or a model.";
+        }
+
+        if (request.Inputs is null || request.Inputs.Count == 0 || request.Inputs.Count > MaxEmbedInputs)
+        {
+            return $"A call embeds from 1 to {MaxEmbedInputs} texts.";
+        }
+
+        if (request.Inputs.Any(string.IsNullOrWhiteSpace))
+        {
+            return "Each text to embed has something in it.";
+        }
+
+        return request.Dimensions is < 1 ? "A vector's size is more than nothing." : null;
+    }
+
     private async Task<(AiCall Call, IAiProvider Provider)> PrepareAsync(AiRequest request, bool streamed, CancellationToken ct)
     {
         if (Invalid(request) is { } why)

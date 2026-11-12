@@ -24,6 +24,14 @@ public interface IAi
     /// <summary>Which model an alias leads to for a scope and a data class, without calling it. Carries no key.</summary>
     /// <exception cref="AiRefusedException"><see cref="AiRefusalCodes.NoModel"/> or <see cref="AiRefusalCodes.DataNotAllowed"/>.</exception>
     Task<AiChoice> ResolveAsync(string alias, Guid? scopeId = null, string? dataClass = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Vectors for texts, one each, from an embedding model the alias leads to: checked against the data rules and the
+    /// limits before they leave, and recorded after, as a reply is.
+    /// </summary>
+    /// <exception cref="AiRefusedException">No model may embed them, a limit is reached, the data may not go there, or the provider failed.</exception>
+    Task<AiEmbedding> EmbedAsync(AiEmbedRequest request, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This gateway doesn't make embeddings.");
 }
 
 /// <summary>
@@ -155,4 +163,7 @@ public sealed record AiChoice(string Alias, string Model, string Provider, Guid 
 
     /// <summary>The host's own name for the connection's type (<see cref="AiConnectionDescriptor.Type"/>); its provider's kind when it has none.</summary>
     public string ConnectionType { get; init; } = Provider;
+
+    /// <summary>The model makes embeddings.</summary>
+    public bool Embeds { get; init; } = true;
 }

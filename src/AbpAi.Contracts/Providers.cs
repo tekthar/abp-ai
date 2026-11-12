@@ -80,4 +80,11 @@ public interface IAiProvider
     /// null when it can't list them, so an admin sets them by hand.
     /// </summary>
     Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>?>(null);
+
+    /// <summary>It makes embeddings (<see cref="EmbedAsync"/>): OpenAI-compatible providers and the demo model do; Anthropic's API doesn't.</summary>
+    bool CanEmbed => false;
+
+    /// <summary>Vectors for the call's texts, one each, in order, and the tokens it counted.</summary>
+    Task<AiProviderEmbedding> EmbedAsync(AiEmbedCall call, CancellationToken cancellationToken) =>
+        throw new NotSupportedException($"The {Kind} provider doesn't make embeddings.");
 }

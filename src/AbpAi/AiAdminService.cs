@@ -396,7 +396,8 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             Dictionary<string, AiModelSettings> settings = new(connection.ModelSettings);
             foreach (string model in found)
             {
-                settings[model] = new AiModelSettings { Enabled = false };
+                // An embedding model says so in its id (text-embedding-3-small, nomic-embed-text, voyage's embed models).
+                settings[model] = new AiModelSettings { Enabled = false, Embeds = model.Contains("embed", StringComparison.OrdinalIgnoreCase) };
             }
 
             connection.Models = [.. connection.Models, .. found];

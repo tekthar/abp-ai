@@ -156,8 +156,9 @@ public class ProviderTests
     {
         ReplyingAi ai = new();
         AgentModelRequest request = new(Guid.NewGuid(), Guid.NewGuid(), "smart", AiMessages.User("hi"), "You are Ask.", null, 4000, "agent:ask", null);
-        await new AiAgentModels(ai, new FixedCalls(new AiAgentCallInfo(null, null) { MaxTokens = 16000 })).CompleteAsync(request, CancellationToken.None);
+        AgentModelReply turn = await new AiAgentModels(ai, new FixedCalls(new AiAgentCallInfo(null, null) { MaxTokens = 16000 })).CompleteAsync(request, CancellationToken.None);
         Assert.Equal((true, 16000), (ai.Sent[^1].Cache, ai.Sent[^1].MaxTokens));
+        Assert.Equal(7, turn.InputTokens); // in, written to the cache and read from it: what the turn sent
 
         // A host's floor below AbpAgent's leaves AbpAgent's; caching may be turned off.
         await new AiAgentModels(ai, new FixedCalls(new AiAgentCallInfo(null, null) { MaxTokens = 1000, Cache = false })).CompleteAsync(request, CancellationToken.None);
@@ -207,7 +208,7 @@ public class ProviderTests
         {
             Sent.Add(request);
             JsonElement message = JsonSerializer.SerializeToElement(new { role = "assistant", content = new[] { new { type = "text", text = "" } }, stop_reason = StopReason });
-            return Task.FromResult(new AiReply(message, "model-1", new AiUsage(1, 1, 0)));
+            return Task.FromResult(new AiReply(message, "model-1", new AiUsage(1, 1, 0) { CacheWriteTokens = 2, CacheReadTokens = 4 }));
         }
 
         public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

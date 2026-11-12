@@ -22,6 +22,9 @@ Two things AbpAgent's request doesn't carry yet; give `IAiAgentCalls` to supply 
   room). The per-call limits still cap it.
 - **`ProviderOptions`**: more of the provider's request, such as `thinking`.
 
+An agent's memory embeds its texts through the same gateway (`IAi.EmbedAsync`, [embeddings.md](embeddings.md)), with
+the agent's account and a purpose of its own (`agent:{key}:memory`), so its limits count those calls too.
+
 A refusal ends the run with the gateway's code (`no_model`, `over_limit`, `data_not_allowed`, `timeout`, `provider`)
 as `AgentModelRefusedException`, and so does a model that declines to answer (its `stop_reason` is `refusal`), with the
 code `refusal`.

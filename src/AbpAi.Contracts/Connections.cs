@@ -39,6 +39,9 @@ public sealed record AiModelSettings
     /// <summary>It follows a JSON schema for a reply; null: as its connection says.</summary>
     public bool? StructuredOutput { get; init; }
 
+    /// <summary>It makes embeddings: an embedding call goes only to a model that does. A model found on a connection does when its id says <c>embed</c>.</summary>
+    public bool Embeds { get; init; }
+
     /// <summary>The most tokens its context holds, for people to read; null when unknown.</summary>
     public int? ContextTokens { get; init; }
 

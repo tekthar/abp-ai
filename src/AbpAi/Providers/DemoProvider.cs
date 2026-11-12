@@ -28,6 +28,73 @@ public sealed class DemoProvider(IEnumerable<IAiDemoResponder> responders, IOpti
 
     public Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>?>([ModelId]);
 
+    /// <summary>The size of the demo model's vectors when a call doesn't ask for one.</summary>
+    public const int EmbeddingDimensions = 256;
+
+    public bool CanEmbed => true;
+
+    /// <summary>
+    /// Vectors for tests and evals, the same for the same text on every run and machine: each word (lower-cased, in any
+    /// script) adds to one of the vector's places, chosen by its hash, and the vector is made of length one. Texts that
+    /// share words are near each other, so a search by meaning can be tested with no provider. An empty text's is zeros.
+    /// </summary>
+    public Task<AiProviderEmbedding> EmbedAsync(AiEmbedCall call, CancellationToken cancellationToken)
+    {
+        int dimensions = call.Dimensions is { } d && d > 0 ? d : EmbeddingDimensions;
+        int perToken = Math.Max(1, options.Value.CharsPerToken);
+        List<float[]> vectors = [.. call.Inputs.Select(text => Vector(text, dimensions))];
+        return Task.FromResult(new AiProviderEmbedding(vectors, call.Inputs.Sum(t => t.Length / perToken + 1)));
+    }
+
+    /// <summary>A text's demo vector: its words hashed into places (FNV-1a, so it's the same everywhere), with a sign each, then of length one.</summary>
+    public static float[] Vector(string text, int dimensions)
+    {
+        float[] vector = new float[dimensions];
+        foreach (string word in Words(text))
+        {
+            ulong hash = 14695981039346656037UL;
+            foreach (char c in word)
+            {
+                hash = (hash ^ c) * 1099511628211UL;
+            }
+
+            vector[(int)(hash % (ulong)dimensions)] += (hash >> 63) == 0 ? 1f : -1f;
+        }
+
+        double length = Math.Sqrt(vector.Sum(v => (double)v * v));
+        if (length > 0)
+        {
+            for (int i = 0; i < dimensions; i++)
+            {
+                vector[i] = (float)(vector[i] / length);
+            }
+        }
+
+        return vector;
+    }
+
+    private static IEnumerable<string> Words(string text)
+    {
+        System.Text.StringBuilder word = new();
+        foreach (char c in text)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                word.Append(char.ToLowerInvariant(c));
+            }
+            else if (word.Length > 0)
+            {
+                yield return word.ToString();
+                word.Clear();
+            }
+        }
+
+        if (word.Length > 0)
+        {
+            yield return word.ToString();
+        }
+    }
+
     public async Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken)
     {
         JsonElement answer = await ReplyAsync(call, cancellationToken);

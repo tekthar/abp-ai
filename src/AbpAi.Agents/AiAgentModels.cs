@@ -76,7 +76,10 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
                     : $"The model ({reply.Model}) declined to answer: {(reply.Text.Length > 500 ? reply.Text[..500] : reply.Text)}");
             }
 
-            return new AgentModelReply(reply.Message, reply.Model, reply.Usage.InputTokens, reply.Usage.OutputTokens, reply.Usage.Cost);
+            // Every token the turn sent, the ones the provider wrote to its cache or read from it too, so a run's token total
+            // and AbpAgent's token limits count what the run sent; the cost is already what each kind cost.
+            int input = reply.Usage.InputTokens + reply.Usage.CacheWriteTokens + reply.Usage.CacheReadTokens;
+            return new AgentModelReply(reply.Message, reply.Model, input, reply.Usage.OutputTokens, reply.Usage.Cost);
         }
         catch (AiRefusedException ex)
         {

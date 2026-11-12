@@ -82,7 +82,7 @@ AiReply reply = await ai.CompleteAsync(new AiRequest("smart", AiMessages.User("D
 });
 ```
 
-See [hosting](docs/hosting.md), [data rules](docs/data-rules.md), [limits](docs/limits.md), [usage](docs/usage.md),
+See [hosting](docs/hosting.md), [data rules](docs/data-rules.md), [limits](docs/limits.md), [usage](docs/usage.md), [embeddings](docs/embeddings.md),
 [testing with the demo model](docs/testing.md), [AbpAgent](docs/agents.md), and [moving a product onto
 AbpAi](docs/moving-onto-abp-ai.md). Why it is shaped this way, and the answers to the open questions, are in
 [ADR 0001](docs/adr/0001-abp-ai-as-a-package.md).

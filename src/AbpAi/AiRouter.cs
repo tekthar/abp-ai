@@ -18,6 +18,9 @@ public sealed record AiRoute(string Alias, AiConnectionDescriptor Connection, st
     /// <summary>The model follows a JSON schema for a reply.</summary>
     public bool StructuredOutput { get; init; } = Connection.StructuredOutput;
 
+    /// <summary>The model makes embeddings.</summary>
+    public bool Embeds { get; init; } = true;
+
     public AiChoice ToChoice() => new(Alias, Model, Connection.Provider, Connection.Id, Connection.Name, Source, SetOnScopeId, StructuredOutput,
         Connection.DataClasses, Connection.Labels)
     {
@@ -25,6 +28,7 @@ public sealed record AiRoute(string Alias, AiConnectionDescriptor Connection, st
         Tools = Tools,
         Images = Images,
         ConnectionType = Connection.Type is { Length: > 0 } type ? type : Connection.Provider,
+        Embeds = Embeds,
     };
 }
 
@@ -33,15 +37,23 @@ public sealed record AiNeeds(bool Tools = false, bool Images = false, bool Struc
 {
     public static readonly AiNeeds None = new();
 
+    /// <summary>An embedding call: only a model that makes embeddings.</summary>
+    public static readonly AiNeeds Embedding = new() { Embeds = true };
+
+    /// <summary>The call is for embeddings.</summary>
+    public bool Embeds { get; init; }
+
     public static AiNeeds Of(AiRequest request) =>
         new(request.Tools is { ValueKind: System.Text.Json.JsonValueKind.Array } tools && tools.GetArrayLength() > 0, AiMessages.HasImages(request.Messages),
             request.OutputSchema is not null);
 
     /// <summary>A model can do what the call needs.</summary>
-    public bool MetBy(AiRoute route) => (!Tools || route.Tools) && (!Images || route.Images) && (!StructuredOutput || route.StructuredOutput);
+    public bool MetBy(AiRoute route) =>
+        (!Tools || route.Tools) && (!Images || route.Images) && (!StructuredOutput || route.StructuredOutput) && (!Embeds || route.Embeds);
 
     public override string ToString() =>
-        string.Join(" and ", new[] { Tools ? "takes tools" : null, Images ? "takes images" : null, StructuredOutput ? "follows a schema" : null }.OfType<string>());
+        string.Join(" and ", new[] { Tools ? "takes tools" : null, Images ? "takes images" : null, StructuredOutput ? "follows a schema" : null,
+            Embeds ? "makes embeddings" : null }.OfType<string>());
 }
 
 /// <summary>
@@ -148,6 +160,7 @@ public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource s
                 Tools = settings?.Tools ?? true,
                 Images = settings?.Images ?? true,
                 StructuredOutput = settings?.StructuredOutput ?? c.StructuredOutput,
+                Embeds = settings?.Embeds ?? true,
             };
     }
 }

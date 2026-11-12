@@ -79,6 +79,71 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
         }
     }
 
+    public bool CanEmbed => true;
+
+    /// <summary>
+    /// Vectors for the texts (<c>POST {endpoint}/embeddings</c>): OpenAI, Azure OpenAI, Ollama, vLLM and Voyage AI answer
+    /// it. <c>dimensions</c> goes when the call gives one; <c>input_type</c> only when the connection's <c>input-type</c>
+    /// setting is <c>send</c> (Voyage AI's), since OpenAI refuses it.
+    /// </summary>
+    public async Task<AiProviderEmbedding> EmbedAsync(AiEmbedCall call, CancellationToken cancellationToken)
+    {
+        JsonObject body = new() { ["model"] = call.Target.Model, ["input"] = new JsonArray([.. call.Inputs.Select(i => (JsonNode?)JsonValue.Create(i))]) };
+        if (call.Dimensions is { } dimensions)
+        {
+            body["dimensions"] = dimensions;
+        }
+
+        if (call.InputType is { Length: > 0 } inputType && call.Target.Settings.TryGetValue("input-type", out string? send) && send == "send")
+        {
+            body["input_type"] = inputType;
+        }
+
+        string json = body.ToJsonString();
+        using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () =>
+        {
+            HttpRequestMessage request = new(HttpMethod.Post, Address(call.Target, "embeddings")) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+            Authorize(request, call.Target);
+            return request;
+        }, HttpCompletionOption.ResponseContentRead, call.Retries ?? _retries, cancellationToken);
+        string answer = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw ProviderHttp.Failed("The provider", (int)response.StatusCode, answer, call.Target.ApiKey);
+        }
+
+        return FromEmbeddings(answer);
+    }
+
+    /// <summary>An embeddings answer's vectors, in the order of the texts (each by its <c>index</c>), and its tokens.</summary>
+    internal static AiProviderEmbedding FromEmbeddings(string answer)
+    {
+        using JsonDocument doc = JsonDocument.Parse(answer);
+        JsonElement root = doc.RootElement;
+        List<(int Index, float[] Vector)> found = [];
+        int at = 0;
+        foreach (JsonElement item in root.GetProperty("data").EnumerateArray())
+        {
+            int index = item.TryGetProperty("index", out JsonElement i) && i.ValueKind == JsonValueKind.Number ? i.GetInt32() : at;
+            JsonElement embedding = item.GetProperty("embedding");
+            float[] vector = new float[embedding.GetArrayLength()];
+            int n = 0;
+            foreach (JsonElement value in embedding.EnumerateArray())
+            {
+                vector[n++] = value.GetSingle();
+            }
+
+            found.Add((index, vector));
+            at++;
+        }
+
+        int tokens = root.TryGetProperty("usage", out JsonElement usage) && usage.ValueKind == JsonValueKind.Object
+            ? usage.TryGetProperty("prompt_tokens", out JsonElement p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32()
+            : usage.TryGetProperty("total_tokens", out JsonElement t) && t.ValueKind == JsonValueKind.Number ? t.GetInt32() : 0
+            : 0;
+        return new AiProviderEmbedding([.. found.OrderBy(f => f.Index).Select(f => f.Vector)], tokens);
+    }
+
     /// <summary>The models the server offers (<c>GET {endpoint}/models</c>).</summary>
     public async Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken)
     {
