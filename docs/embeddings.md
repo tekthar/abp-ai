@@ -21,6 +21,10 @@ estimate (the texts' tokens) is reserved against every limit that applies, in co
 the ledger with its purpose and what it was about, and a refusal is too. Only the connection's total timeout applies,
 as the vectors come whole. Up to 2,048 texts a call, none empty.
 
+A vector column is sized once (in its migration), so a call may say the size it needs (`Dimensions`): the vectors come
+back that size, or the call is refused (`provider`) when the model can't give it. OpenAI's `text-embedding-3` models
+shorten theirs; most others give their own size only.
+
 ## Models that make them
 
 A model says it makes embeddings in its settings (`AiModelSettings.Embeds`); an embedding call goes only to one that

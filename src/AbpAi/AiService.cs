@@ -211,6 +211,12 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
             {
                 throw new AiProviderException($"{route.Connection.Name} gave {answer.Vectors.Count} vectors for {request.Inputs.Count} texts.");
             }
+
+            // A vector column is sized once: a model that can't give the size asked for is refused, not stored wrong.
+            if (request.Dimensions is { } size && answer.Vectors.FirstOrDefault(v => v.Length != size) is { } other)
+            {
+                throw new AiProviderException($"{route.Model} on {route.Connection.Name} gives vectors of {other.Length} places, not the {size} asked for.");
+            }
         }
         catch (Exception ex)
         {

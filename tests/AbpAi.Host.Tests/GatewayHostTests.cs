@@ -60,6 +60,7 @@ public sealed partial class GatewayHostTests : IAsyncLifetime
             s.AddSingleton<IAiProvider>(_slow);
             s.AddSingleton<IAiProvider>(_fussy);
             s.AddSingleton<IAiProvider>(_caching);
+            s.AddSingleton<IAiProvider>(new FixedSizeEmbedder());
             // A short idle timeout for the site, so the timeouts' tests run in seconds; the demo model answers at once.
             s.PostConfigure<AiOptions>(o => o.IdleTimeout = TimeSpan.FromSeconds(2));
         }));

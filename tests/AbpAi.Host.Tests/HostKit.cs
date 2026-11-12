@@ -124,6 +124,23 @@ public sealed class CachingProvider : IAiProvider
     public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
+/// <summary>A provider whose model gives vectors of 8 places whatever size a call asks for, as a model that can't shorten them does.</summary>
+public sealed class FixedSizeEmbedder : IAiProvider
+{
+    public const string TheKind = "fixed-embed";
+
+    public string Kind => TheKind;
+
+    public bool CanEmbed => true;
+
+    public Task<AiProviderEmbedding> EmbedAsync(AiEmbedCall call, CancellationToken cancellationToken) =>
+        Task.FromResult(new AiProviderEmbedding([.. call.Inputs.Select(_ => new float[8])], call.Inputs.Count));
+
+    public Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
 /// <summary>Keeps what the gateway would have the audit log keep.</summary>
 public sealed class RecordingAudit : IAiAudit
 {

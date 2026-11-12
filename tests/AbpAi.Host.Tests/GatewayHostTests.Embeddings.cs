@@ -54,5 +54,12 @@ public sealed partial class GatewayHostTests
 
         // Refusals are on the ledger with why, at no cost.
         Assert.Equal(4, await Db(db => db.AiUsage.CountAsync(r => r.State == AiUsageStates.Refused && r.Cost == 0)));
+
+        // A vector column is sized once: a model that can't give the size asked for is refused, and one that can answers.
+        await admin.CreateConnectionAsync(SiteAdmin, null, new AiConnectionInput("fixed", FixedSizeEmbedder.TheKind, ["fixed-8"], Every), default);
+        AiRefusedException size = await Assert.ThrowsAsync<AiRefusedException>(() => ai.EmbedAsync(new AiEmbedRequest("fixed-8", ["x"]) { Dimensions = 16 }));
+        Assert.Equal(AiRefusalCodes.Provider, size.Code);
+        Assert.Contains("not the 16 asked for", size.Message);
+        Assert.Equal(8, (await ai.EmbedAsync(new AiEmbedRequest("fixed-8", ["x"]) { Dimensions = 8 })).Dimensions);
     }
 }
