@@ -29,5 +29,9 @@ A refusal ends the run with the gateway's code (`no_model`, `over_limit`, `data_
 as `AgentModelRefusedException`, and so does a model that declines to answer (its `stop_reason` is `refusal`), with the
 code `refusal`.
 
-Streaming for AbpAgent's live chats (A1) comes when `IAgentModels` has a streaming call; `IAi.StreamAsync` is ready
-for it.
+A live chat's turn streams (AbpAgent 0.3.0's `IAgentModels.StreamAsync`, A1): the Messages API's events as the model
+writes them, then `AgentModelEvent.Finished` with the whole reply, its tokens (in, the cache's, out) and its settled
+cost. A refusal before the first event is thrown as `AgentModelRefusedException`; a failure after it (a timeout, the
+provider breaking off) is the Messages API's `error` event, its `error.type` the gateway's code, and the stream ends;
+so does a model that declines (`refusal`). A stream that fails after it began costs what it used, and the agent's
+limits count it.

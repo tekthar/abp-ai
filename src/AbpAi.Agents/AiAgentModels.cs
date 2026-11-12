@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -42,7 +43,9 @@ public sealed class NoAiAgentCallInfo : IAiAgentCalls
 /// gateway's aliases, the per-agent and per-person limits and the data rules all apply, and its usage is recorded as
 /// <c>agent:{key}</c> about the run's item. Each turn may be cached by the provider (<see cref="AiAgentCallInfo.Cache"/>). A
 /// refusal ends the run with the gateway's code, and so does a model that declines to answer (its <c>stop_reason</c> is
-/// <c>refusal</c>), with the code <c>refusal</c>.
+/// <c>refusal</c>), with the code <c>refusal</c>. A live chat's turn streams (<see cref="StreamAsync"/>): the Messages API's
+/// events as the model writes them, then the whole reply; a refusal before the first event is thrown, and a failure after
+/// it is the Messages API's <c>error</c> event, its type the gateway's code.
 /// </summary>
 public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
 {
@@ -51,8 +54,95 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
 
     public async Task<AgentModelReply> CompleteAsync(AgentModelRequest request, CancellationToken cancellationToken)
     {
+        AiRequest call = await CallAsync(request, cancellationToken);
+        try
+        {
+            AiReply reply = await ai.CompleteAsync(call, cancellationToken);
+            if (reply.StopReason == RefusalStop)
+            {
+                throw new AgentModelRefusedException(RefusalStop, Declined(reply));
+            }
+
+            return Reply(reply);
+        }
+        catch (AiRefusedException ex)
+        {
+            throw new AgentModelRefusedException(ex.Code, ex.Message);
+        }
+    }
+
+    public async IAsyncEnumerable<AgentModelEvent> StreamAsync(AgentModelRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        AiRequest call = await CallAsync(request, cancellationToken);
+        IAsyncEnumerator<AiStreamEvent> events = ai.StreamAsync(call, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        bool started = false;
+        try
+        {
+            while (true)
+            {
+                AiStreamEvent? next = null;
+                AiRefusedException? failed = null;
+                try
+                {
+                    if (!await events.MoveNextAsync())
+                    {
+                        yield break;
+                    }
+
+                    next = events.Current;
+                }
+                catch (AiRefusedException ex) when (!started)
+                {
+                    throw new AgentModelRefusedException(ex.Code, ex.Message);
+                }
+                catch (AiRefusedException ex)
+                {
+                    failed = ex;
+                }
+
+                if (failed is not null)
+                {
+                    // It began: the run keeps what was written so far, and ends with the gateway's code as the error's type.
+                    yield return Error(failed.Code, failed.Message);
+                    yield break;
+                }
+
+                if (next!.Type == AiStreamEvent.Done && next.Reply is { } reply)
+                {
+                    yield return reply.StopReason == RefusalStop ? Error(RefusalStop, Declined(reply)) : AgentModelEvent.Finished(Reply(reply));
+                    yield break;
+                }
+
+                started = true;
+                yield return new AgentModelEvent(next.Type, next.Data);
+            }
+        }
+        finally
+        {
+            await events.DisposeAsync();
+        }
+    }
+
+    /// <summary>The Messages API's <c>error</c> event, its type the gateway's code.</summary>
+    private static AgentModelEvent Error(string code, string message) =>
+        new("error", JsonSerializer.SerializeToElement(new { type = "error", error = new { type = code, message } }));
+
+    private static string Declined(AiReply reply) => string.IsNullOrWhiteSpace(reply.Text)
+        ? $"The model ({reply.Model}) declined to answer."
+        : $"The model ({reply.Model}) declined to answer: {(reply.Text.Length > 500 ? reply.Text[..500] : reply.Text)}";
+
+    /// <summary>
+    /// The reply as AbpAgent takes it, with every token the turn sent (the ones the provider wrote to its cache or read from
+    /// it too), so a run's token total and AbpAgent's token limits count what the run sent; the cost is already right.
+    /// </summary>
+    private static AgentModelReply Reply(AiReply reply) =>
+        new(reply.Message, reply.Model, reply.Usage.InputTokens + reply.Usage.CacheWriteTokens + reply.Usage.CacheReadTokens, reply.Usage.OutputTokens,
+            reply.Usage.Cost);
+
+    private async Task<AiRequest> CallAsync(AgentModelRequest request, CancellationToken cancellationToken)
+    {
         AiAgentCallInfo info = await calls.DescribeAsync(request, cancellationToken);
-        AiRequest call = new(request.Alias, request.Messages)
+        return new AiRequest(request.Alias, request.Messages)
         {
             System = request.System,
             Tools = request.Tools,
@@ -66,25 +156,6 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
             DataClass = info.DataClass,
             About = request.ItemId is { } item ? new AiSubject("item", item.ToString()) : null,
         };
-        try
-        {
-            AiReply reply = await ai.CompleteAsync(call, cancellationToken);
-            if (reply.StopReason == RefusalStop)
-            {
-                throw new AgentModelRefusedException(RefusalStop, string.IsNullOrWhiteSpace(reply.Text)
-                    ? $"The model ({reply.Model}) declined to answer."
-                    : $"The model ({reply.Model}) declined to answer: {(reply.Text.Length > 500 ? reply.Text[..500] : reply.Text)}");
-            }
-
-            // Every token the turn sent, the ones the provider wrote to its cache or read from it too, so a run's token total
-            // and AbpAgent's token limits count what the run sent; the cost is already what each kind cost.
-            int input = reply.Usage.InputTokens + reply.Usage.CacheWriteTokens + reply.Usage.CacheReadTokens;
-            return new AgentModelReply(reply.Message, reply.Model, input, reply.Usage.OutputTokens, reply.Usage.Cost);
-        }
-        catch (AiRefusedException ex)
-        {
-            throw new AgentModelRefusedException(ex.Code, ex.Message);
-        }
     }
 }
 
