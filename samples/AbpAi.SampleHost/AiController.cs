@@ -16,7 +16,7 @@ public sealed record AliasInput(IReadOnlyList<AiAliasTarget> Targets);
 /// sample has no sign-in, a real host has its own. A refusal is 422 with its code and, for a limit, which and when it frees.
 /// </summary>
 [Route("api/ai")]
-public class AiController(IAi ai, AiAdminService admin, AiUsageService usage, SampleOrg org) : AbpControllerBase
+public class AiController(IAi ai, AiAdminService admin, AiUsageService usage, AiExportService exports, SampleOrg org) : AbpControllerBase
 {
     private AiActor Actor => Request.Headers.TryGetValue("X-Account", out var value) && Guid.TryParse(value, out Guid id)
         ? new AiActor(id)
@@ -70,6 +70,16 @@ public class AiController(IAi ai, AiAdminService admin, AiUsageService usage, Sa
     [HttpPut("connections/{id:guid}")]
     public Task<AiConnectionInfo> UpdateConnection(Guid id, [FromBody] AiConnectionInput input, CancellationToken ct) => admin.UpdateConnectionAsync(Actor, id, input, ct);
 
+    [HttpPost("connections/{id:guid}/test")]
+    public Task<AiConnectionTest> TestConnection(Guid id, [FromQuery] string? scope, [FromQuery] string? model, CancellationToken ct) =>
+        admin.TestConnectionAsync(Actor, ScopeOf(scope), id, model, ct);
+
+    [HttpGet("accounts/{id:guid}/limits")]
+    public Task<List<AiLimitInfo>> AccountLimits(Guid id, CancellationToken ct) => admin.ListAccountLimitsAsync(Actor, id, ct);
+
+    [HttpPut("accounts/{id:guid}/limits")]
+    public Task<AiLimitInfo> SetAccountLimit(Guid id, [FromBody] AiLimitInput input, CancellationToken ct) => admin.SetAccountLimitAsync(Actor, id, input, ct);
+
     [HttpGet("aliases")]
     public Task<List<AiAliasInfo>> Aliases([FromQuery] string? scope, CancellationToken ct) => admin.ListAliasesAsync(Actor, ScopeOf(scope), ct);
 
@@ -97,6 +107,25 @@ public class AiController(IAi ai, AiAdminService admin, AiUsageService usage, Sa
     [HttpGet("usage/export")]
     public async Task<IActionResult> Export([FromQuery] string? scope, [FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken ct) =>
         File(System.Text.Encoding.UTF8.GetBytes(await usage.ExportCsvAsync(Actor, Query(scope, from, to, "scope"), ct)), "text/csv", "ai-usage.csv");
+
+    [HttpGet("usage/calls")]
+    public Task<IReadOnlyList<AiCallRow>> Calls([FromQuery] string? scope, [FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] string? state,
+        [FromQuery] int count = 50, CancellationToken ct = default) =>
+        usage.RecentAsync(Actor, Query(scope, from, to, "scope") with { States = state is { Length: > 0 } ? [state] : null }, count, ct);
+
+    [HttpPost("exports")]
+    public Task<AiExportInfo> CreateExport([FromQuery] string? scope, [FromQuery] DateTime from, [FromQuery] DateTime to, CancellationToken ct) =>
+        exports.CreateAsync(Actor, from, to, ScopeOf(scope), ct);
+
+    [HttpGet("exports")]
+    public Task<List<AiExportInfo>> Exports(CancellationToken ct) => exports.ListAsync(Actor, ct);
+
+    [HttpGet("exports/{id:guid}")]
+    public async Task<IActionResult> DownloadExport(Guid id, CancellationToken ct)
+    {
+        AiExportFile file = await exports.DownloadAsync(Actor, id, ct);
+        return File(file.Content, file.ContentType, file.Name);
+    }
 
     private AiUsageQuery Query(string? scope, DateTime? from, DateTime? to, string groupBy)
     {

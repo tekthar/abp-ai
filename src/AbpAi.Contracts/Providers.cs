@@ -27,17 +27,34 @@ public sealed record AiProviderCall(AiTarget Target, JsonElement Messages, strin
     /// </summary>
     public AiRequest? Request { get; init; }
 
+    /// <summary>The provider may cache the call's start (<see cref="AiRequest.Cache"/>).</summary>
+    public bool Cache { get; init; }
+
+    /// <summary>How many times a built-in provider tries again when the provider is busy; null: the site's (<c>AbpAi:ProviderRetries</c>).</summary>
+    public int? Retries { get; init; }
+
     /// <summary>The system text: the blocks' text, joined, when there are blocks; else <see cref="System"/>.</summary>
     public string? SystemText => AiMessages.SystemText(System, SystemBlocks);
 }
 
 /// <summary>A provider's reply: the assistant message in the Messages API's shape, and the tokens it counted.</summary>
-public sealed record AiProviderReply(JsonElement Message, int InputTokens, int OutputTokens);
+/// <param name="InputTokens">The input tokens it didn't cache or read from its cache.</param>
+public sealed record AiProviderReply(JsonElement Message, int InputTokens, int OutputTokens)
+{
+    /// <summary>Input tokens it wrote to its cache.</summary>
+    public int CacheWriteTokens { get; init; }
+
+    /// <summary>Input tokens it read from its cache.</summary>
+    public int CacheReadTokens { get; init; }
+}
 
 /// <summary>A provider failed (its status, its words): the gateway refuses with <see cref="AiRefusalCodes.Provider"/>.</summary>
 public sealed class AiProviderException(string message, int? status = null, Exception? inner = null) : Exception(message, inner)
 {
     public int? Status { get; } = status;
+
+    /// <summary>The provider's own reason (its error's message), without the key; null when it gave none.</summary>
+    public string? Reason { get; init; }
 }
 
 /// <summary>

@@ -14,6 +14,25 @@ public static class AiRefusalCodes
 
     /// <summary>No connection the alias leads to may receive the call's class of data.</summary>
     public const string DataNotAllowed = "data_not_allowed";
+
+    /// <summary>
+    /// The provider took too long: it sent nothing for the connection's idle timeout, or the call ran past its total
+    /// timeout. <see cref="AiRefusedException.TimedOut"/> says which.
+    /// </summary>
+    public const string Timeout = "timeout";
+
+    /// <summary>The call isn't one the gateway can make as it's asked: no alias, no messages, no tokens to answer with.</summary>
+    public const string Invalid = "invalid";
+}
+
+/// <summary>Which of a connection's timeouts ran out.</summary>
+public static class AiTimeouts
+{
+    /// <summary>The longest wait for the next part of a reply (a streamed call's first event included).</summary>
+    public const string Idle = "idle";
+
+    /// <summary>The longest a whole call may take.</summary>
+    public const string Total = "total";
 }
 
 /// <summary>Which limit refused a call: its kind, where, whose, over what period, what it counts, how much, and when it frees.</summary>
@@ -37,4 +56,7 @@ public sealed class AiRefusedException(string code, string message, AiLimitRef? 
 
     /// <summary>The limit, for <see cref="AiRefusalCodes.OverLimit"/>.</summary>
     public AiLimitRef? Limit { get; } = limit;
+
+    /// <summary>For <see cref="AiRefusalCodes.Timeout"/>: which timeout ran out (<see cref="AiTimeouts"/>).</summary>
+    public string? TimedOut { get; init; }
 }

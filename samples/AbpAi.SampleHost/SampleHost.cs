@@ -85,6 +85,9 @@ public sealed class SampleScope
 public sealed class SampleOrg(IConfiguration configuration) : IAiScopes, IAiRights, IAiAccounts, ISingletonDependency
 {
     private readonly List<Guid> _siteAdmins = configuration.GetSection("Sample:SiteAdmins").Get<List<Guid>>() ?? [];
+    private readonly Guid? _owner = configuration.GetValue<Guid?>("Sample:Owner");
+    private readonly Dictionary<Guid, List<Guid>> _accountAdmins = configuration.GetSection("Sample:AccountAdmins").GetChildren()
+        .ToDictionary(c => Guid.Parse(c.Key), c => c.Get<List<Guid>>() ?? []);
     private readonly Dictionary<Guid, SampleScope> _scopes = (configuration.GetSection("Sample:Scopes").Get<List<SampleScope>>() ?? []).ToDictionary(s => s.Id);
     private readonly Dictionary<Guid, List<Guid>> _groups = configuration.GetSection("Sample:Groups").GetChildren()
         .ToDictionary(c => Guid.Parse(c.Key), c => c.Get<List<Guid>>() ?? []);
@@ -103,6 +106,13 @@ public sealed class SampleOrg(IConfiguration configuration) : IAiScopes, IAiRigh
 
     public Task<bool> AdministersScopeAsync(AiActor actor, Guid scopeId, CancellationToken cancellationToken) =>
         Task.FromResult(_scopes.TryGetValue(scopeId, out SampleScope? scope) && scope.Admins.Contains(actor.Id));
+
+    /// <summary>The site's owner (<c>Sample:Owner</c>): the one who exports its calls for support.</summary>
+    public Task<bool> IsSiteOwnerAsync(AiActor actor, CancellationToken cancellationToken) => Task.FromResult(_owner == actor.Id);
+
+    /// <summary>An agent's admins (<c>Sample:AccountAdmins</c>), who set its own limits.</summary>
+    public Task<bool> AdministersAccountAsync(AiActor actor, Guid accountId, CancellationToken cancellationToken) =>
+        Task.FromResult(_accountAdmins.TryGetValue(accountId, out List<Guid>? admins) && admins.Contains(actor.Id));
 
     public Task<IReadOnlyList<Guid>> GroupsOfAsync(Guid accountId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<Guid>>([.. _groups.Where(g => g.Value.Contains(accountId)).Select(g => g.Key)]);

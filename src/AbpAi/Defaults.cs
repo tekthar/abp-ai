@@ -60,13 +60,17 @@ public class StoredAiConnections(AiDb aiDb, IStringEncryptionService encryption)
         InputPrice = c.InputPrice,
         OutputPrice = c.OutputPrice,
         ModelPrices = c.ModelPrices,
+        CacheWritePrice = c.CacheWritePrice,
+        CacheReadPrice = c.CacheReadPrice,
         StructuredOutput = c.StructuredOutput,
         Enabled = c.Enabled,
         HasKey = c.ProtectedKey is not null,
+        IdleTimeout = c.IdleTimeoutSeconds is { } idle ? TimeSpan.FromSeconds(idle) : null,
+        TotalTimeout = c.TotalTimeoutSeconds is { } total ? TimeSpan.FromSeconds(total) : null,
     };
 }
 
-/// <summary>Writes a limit nearing to the log.</summary>
+/// <summary>Writes a limit nearing, and a limit reached, to the log.</summary>
 public sealed class LoggedAiNotices(ILogger<LoggedAiNotices> logger) : IAiNotices
 {
     public Task LimitNearingAsync(AiLimitNotice notice, CancellationToken cancellationToken)
@@ -75,11 +79,29 @@ public sealed class LoggedAiNotices(ILogger<LoggedAiNotices> logger) : IAiNotice
             notice.Limit.Kind, notice.Limit.Period, notice.Limit.ScopeId?.ToString() ?? "the site", notice.Limit.Spent, notice.Limit.Amount, notice.Limit.FreesAt);
         return Task.CompletedTask;
     }
+
+    public Task LimitReachedAsync(AiLimitNotice notice, CancellationToken cancellationToken)
+    {
+        logger.LogWarning("AI limit {LimitId} ({Kind}, {Period}) on {Scope} is reached ({Amount}); it frees at {FreesAt:u}.", notice.Limit.LimitId,
+            notice.Limit.Kind, notice.Limit.Period, notice.Limit.ScopeId?.ToString() ?? "the site", notice.Limit.Amount, notice.Limit.FreesAt);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Writes the gateway's audited actions to the log, for a host with no audit log of its own.</summary>
+public sealed class LoggedAiAudit(ILogger<LoggedAiAudit> logger) : IAiAudit
+{
+    public Task RecordAsync(AiAuditEntry entry, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("AI audit: {Action} by {Actor} on {Target} ({Details}).", entry.Action, entry.Actor.Id, entry.TargetId,
+            string.Join(", ", entry.Details.Select(d => $"{d.Key}={d.Value}")));
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>
-/// Lets go reservations no one settled (a server stopped mid-call), and deletes kept prompts past the site's period
-/// (all of them once the site stops keeping prompts).
+/// Lets go reservations no one settled (a server stopped mid-call), deletes kept prompts past the site's period (all of
+/// them once the site stops keeping prompts), and deletes exports of calls past their days.
 /// </summary>
 public sealed class AiHousekeeping(IServiceScopeFactory scopes, IOptions<AiOptions> options, ILogger<AiHousekeeping> logger) : BackgroundService
 {
@@ -112,6 +134,8 @@ public sealed class AiHousekeeping(IServiceScopeFactory scopes, IOptions<AiOptio
             AiSite? site = await db.AiSites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == AiSite.TheId, ct);
             DateTime keepSince = site is { KeepPrompts: true } ? DateTime.UtcNow.AddDays(-site.PromptDays) : DateTime.MaxValue;
             await db.AiPrompts.Where(p => p.At < keepSince).ExecuteDeleteAsync(ct);
+            DateTime now = DateTime.UtcNow;
+            await db.AiExports.Where(e => e.ExpiresAt <= now).ExecuteDeleteAsync(ct);
         }, requiresNew: true, cancellationToken: ct);
     }
 }

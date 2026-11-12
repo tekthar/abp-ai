@@ -25,6 +25,9 @@ public interface IAiDbContext : IEfCoreDbContext
 
     /// <summary>Which of the site's models each scope may use, when the site lists them. A host's context needn't name it.</summary>
     DbSet<AiScopeAccess> AiScopeAccess => Set<AiScopeAccess>();
+
+    /// <summary>Exports of calls for support, kept a week. A host's context needn't name it.</summary>
+    DbSet<AiExport> AiExports => Set<AiExport>();
 }
 
 /// <summary>Runs the gateway's work in a unit of work: the caller's when there is one, or a new one.</summary>
@@ -59,6 +62,8 @@ public static class AiModel
         builder.Entity<AiConnection>(b =>
         {
             b.ToTable("connections", Schema);
+            // Named apart from a host's own connections table's key.
+            b.HasKey(x => x.Id).HasName("PK_ai_connections");
             b.Property(x => x.Id).ValueGeneratedNever();
             b.Property(x => x.Name).HasMaxLength(100).IsRequired();
             b.Property(x => x.Provider).HasMaxLength(64).IsRequired();
@@ -71,6 +76,8 @@ public static class AiModel
             b.Property(x => x.ModelPrices).HasJsonConversion();
             b.Property(x => x.InputPrice).HasPrecision(18, 6);
             b.Property(x => x.OutputPrice).HasPrecision(18, 6);
+            b.Property(x => x.CacheWritePrice).HasPrecision(18, 6);
+            b.Property(x => x.CacheReadPrice).HasPrecision(18, 6);
             b.HasIndex(x => new { x.ScopeId, x.Name }).IsUnique().AreNullsDistinct(false);
         });
 
@@ -112,6 +119,9 @@ public static class AiModel
             b.Property(x => x.ReservedTokens).HasDefaultValue(0);
             b.Property(x => x.Cost).HasPrecision(18, 6);
             b.Property(x => x.Error).HasMaxLength(1000);
+            b.Property(x => x.Code).HasMaxLength(32);
+            b.Property(x => x.CacheWriteTokens).HasDefaultValue(0);
+            b.Property(x => x.CacheReadTokens).HasDefaultValue(0);
             b.HasIndex(x => x.At);
             b.HasIndex(x => new { x.AccountId, x.At });
             b.HasIndex(x => new { x.OnBehalfOf, x.At });
@@ -142,6 +152,32 @@ public static class AiModel
             b.Property(x => x.Id).ValueGeneratedNever();
             b.Property(x => x.SiteModels).HasJsonConversion();
         });
+
+        builder.Entity<AiExport>(b =>
+        {
+            b.ToTable("exports", Schema);
+            b.HasKey(x => x.Id).HasName("PK_ai_exports");
+            b.Property(x => x.Id).ValueGeneratedNever();
+            b.Property(x => x.Content).IsRequired();
+            b.HasIndex(x => x.ExpiresAt).HasDatabaseName("IX_ai_exports_ExpiresAt");
+        });
+    }
+
+    /// <summary>
+    /// Leaves the gateway's tables out of a model: for a host's own tests on a database that isn't PostgreSQL (SQLite,
+    /// the in-memory one), where its columns (<c>uuid[]</c>, <c>jsonb</c>) can't be made. The gateway itself needs
+    /// PostgreSQL; tests that call it run on one.
+    /// </summary>
+    public static void IgnoreAi(this ModelBuilder builder)
+    {
+        builder.Ignore<AiConnection>();
+        builder.Ignore<AiAlias>();
+        builder.Ignore<AiLimit>();
+        builder.Ignore<AiUsageRecord>();
+        builder.Ignore<AiPromptRecord>();
+        builder.Ignore<AiSite>();
+        builder.Ignore<AiScopeAccess>();
+        builder.Ignore<AiExport>();
     }
 
     /// <summary>Stores the value as jsonb, compared by its JSON so changes inside it are detected.</summary>

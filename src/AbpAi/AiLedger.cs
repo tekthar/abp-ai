@@ -13,6 +13,13 @@ public sealed record AiCall(AiRequest Request, AiScopeChain Chain, AiRoute Route
     public int EstimatedTokens { get; init; }
 }
 
+/// <summary>What a call took: its tokens in (those the provider didn't cache or read from its cache), written to the cache, read from it, and out.</summary>
+public sealed record AiSettlement(int InputTokens, int OutputTokens, int CacheWriteTokens, int CacheReadTokens)
+{
+    /// <summary>Every token it took, as token limits count them.</summary>
+    public long All => (long)InputTokens + CacheWriteTokens + CacheReadTokens + OutputTokens;
+}
+
 /// <summary>A limit a call was checked against, with what was spent before it.</summary>
 public sealed record AiCheckedLimit(AiLimitRef Limit);
 
@@ -111,7 +118,9 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
                 // A reservation holds its estimate; a settled call what it took.
                 decimal spent = limit.Measure switch
                 {
-                    AiLimitMeasures.Tokens => await counted.SumAsync(r => r.State == AiUsageStates.Reserved ? (long)r.ReservedTokens : (long)r.InputTokens + r.OutputTokens, ct),
+                    AiLimitMeasures.Tokens => await counted.SumAsync(r => r.State == AiUsageStates.Reserved
+                        ? (long)r.ReservedTokens
+                        : (long)r.InputTokens + r.OutputTokens + r.CacheWriteTokens + r.CacheReadTokens, ct),
                     AiLimitMeasures.Requests => await counted.CountAsync(ct),
                     _ => await counted.SumAsync(r => r.Cost, ct),
                 };
@@ -147,50 +156,64 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
         }, requiresNew: true, cancellationToken: ct, isTransactional: true);
     }
 
+    /// <summary>Settles a call with its tokens in and out, as <see cref="SettleAsync(AiReservation, AiCall, AiSettlement, decimal, int, CancellationToken)"/>.</summary>
+    public Task SettleAsync(AiReservation reservation, AiCall call, int inputTokens, int outputTokens, decimal cost, int durationMs, CancellationToken ct) =>
+        SettleAsync(reservation, call, new AiSettlement(inputTokens, outputTokens, 0, 0), cost, durationMs, ct);
+
     /// <summary>
-    /// Settles a call with what it cost, and tells admins of each limit it took past the notice mark, in the limit's
-    /// measure. A limit over a minute is a rate that frees within it, so no one is told of it.
+    /// Settles a call with what it cost, and tells admins of each limit it took past the notice mark, and of each it took
+    /// to its amount, in the limit's measure. A limit over a minute is a rate that frees within it, so no one is told of it.
     /// </summary>
-    public async Task SettleAsync(AiReservation reservation, AiCall call, int inputTokens, int outputTokens, decimal cost, int durationMs, CancellationToken ct)
+    public async Task SettleAsync(AiReservation reservation, AiCall call, AiSettlement used, decimal cost, int durationMs, CancellationToken ct)
     {
         await aiDb.RunAsync(async db =>
         {
             AiUsageRecord record = await db.AiUsage.FirstAsync(r => r.Id == reservation.UsageId, ct);
             record.State = AiUsageStates.Done;
-            record.InputTokens = inputTokens;
-            record.OutputTokens = outputTokens;
+            record.InputTokens = used.InputTokens;
+            record.OutputTokens = used.OutputTokens;
+            record.CacheWriteTokens = used.CacheWriteTokens;
+            record.CacheReadTokens = used.CacheReadTokens;
             record.Cost = cost;
             record.DurationMs = durationMs;
             await db.SaveChangesAsync(ct);
         }, requiresNew: true, cancellationToken: ct);
 
         decimal mark = options.Value.NoticeAt;
-        foreach (AiCheckedLimit limit in reservation.Limits.Where(l => l.Limit.Period != AiPeriods.Minute))
+        foreach (AiCheckedLimit limit in reservation.Limits.Where(l => l.Limit.Period != AiPeriods.Minute && l.Limit.Amount > 0))
         {
-            decimal used = limit.Limit.Measure switch
+            decimal took = limit.Limit.Measure switch
             {
-                AiLimitMeasures.Tokens => (decimal)inputTokens + outputTokens,
+                AiLimitMeasures.Tokens => used.All,
                 AiLimitMeasures.Requests => 1,
                 _ => cost,
             };
-            decimal at = limit.Limit.Amount * mark;
-            if (limit.Limit.Amount > 0 && limit.Limit.Spent < at && limit.Limit.Spent + used >= at)
+            decimal spent = limit.Limit.Spent, at = limit.Limit.Amount * mark;
+            AiLimitNotice notice = new(limit.Limit with { Spent = spent + took }, call.Chain.Scope, call.Request.AccountId, call.Request.Purpose);
+            if (spent < at && spent + took >= at)
             {
                 try
                 {
-                    await notices.LimitNearingAsync(new AiLimitNotice(limit.Limit with { Spent = limit.Limit.Spent + used }, call.Chain.Scope, call.Request.AccountId,
-                        call.Request.Purpose), ct);
+                    await notices.LimitNearingAsync(notice, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger.LogWarning(ex, "Telling admins that limit {Limit} nears failed.", limit.Limit.LimitId);
                 }
             }
+
+            if (spent < limit.Limit.Amount && spent + took >= limit.Limit.Amount)
+            {
+                await TellReachedAsync(notice, ct);
+            }
         }
     }
 
     /// <summary>The call failed or was stopped: it costs nothing, and its error is kept.</summary>
-    public Task FailAsync(AiReservation reservation, string error, int durationMs) =>
+    public Task FailAsync(AiReservation reservation, string error, int durationMs) => FailAsync(reservation, error, durationMs, null);
+
+    /// <summary>The call failed or was stopped: it costs nothing, and its error and why (a <see cref="AiRefusalCodes"/>) are kept.</summary>
+    public Task FailAsync(AiReservation reservation, string error, int durationMs, string? code) =>
         aiDb.RunAsync(async db =>
         {
             AiUsageRecord? record = await db.AiUsage.FirstOrDefaultAsync(r => r.Id == reservation.UsageId);
@@ -200,9 +223,67 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
                 record.Cost = 0;
                 record.DurationMs = durationMs;
                 record.Error = error.Length > 1000 ? error[..1000] : error;
+                record.Code = code;
                 await db.SaveChangesAsync();
             }
         }, requiresNew: true);
+
+    /// <summary>
+    /// A call the gateway refused before it left, kept on the ledger at no cost with why (its code and words), so usage
+    /// counts refusals too; when a limit refused it, the limit's admins hear it's reached, once a period. Keeping it never
+    /// fails the call: the refusal is what the caller gets.
+    /// </summary>
+    public async Task RefusedAsync(AiRequest request, AiScopeChain chain, string dataClass, AiRoute? route, bool streamed, AiRefusedException refused, CancellationToken ct)
+    {
+        try
+        {
+            AiUsageRecord record = new(Guid.NewGuid(), DateTime.UtcNow, chain.Scope, chain.Path, request.AccountId, request.OnBehalfOf, request.Purpose,
+                (request.Alias ?? "").Trim(), route?.Connection.Id ?? Guid.Empty, route?.Connection.Name ?? "", route?.Connection.Provider ?? "", route?.Model ?? "",
+                dataClass, 0m, streamed)
+            {
+                State = AiUsageStates.Refused,
+                Code = refused.Code,
+                Error = refused.Message.Length > 1000 ? refused.Message[..1000] : refused.Message,
+                AboutKind = request.About?.Kind is { } kind ? AiUsageRecord.Cut(kind, 128) : null,
+                AboutId = request.About?.Id is { } about ? AiUsageRecord.Cut(about, 128) : null,
+                DurationMs = 0,
+            };
+            await aiDb.RunAsync(async db =>
+            {
+                db.AiUsage.Add(record);
+                await db.SaveChangesAsync(CancellationToken.None);
+            }, requiresNew: true, cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "A refused AI call couldn't be kept on the ledger.");
+        }
+
+        if (refused.Code == AiRefusalCodes.OverLimit && refused.Limit is { } limit && limit.Period != AiPeriods.Minute)
+        {
+            await TellReachedAsync(new AiLimitNotice(limit, chain.Scope, request.AccountId, request.Purpose), ct);
+        }
+    }
+
+    /// <summary>Tells the limit's admins it's reached, when they haven't been told in its period yet; a failure to tell never fails anything.</summary>
+    private async Task TellReachedAsync(AiLimitNotice notice, CancellationToken ct)
+    {
+        try
+        {
+            DateTime start = AiPeriods.Of(notice.Limit.Period, notice.Limit.FreesAt.AddTicks(-1)).Start;
+            Guid id = notice.Limit.LimitId;
+            int marked = await aiDb.RunAsync(db => db.AiLimits.Where(l => l.Id == id && (l.ReachedNoticeFor == null || l.ReachedNoticeFor != start))
+                .ExecuteUpdateAsync(u => u.SetProperty(l => l.ReachedNoticeFor, start), CancellationToken.None), requiresNew: true, cancellationToken: CancellationToken.None);
+            if (marked > 0)
+            {
+                await notices.LimitReachedAsync(notice, ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Telling admins that limit {Limit} is reached failed.", notice.Limit.LimitId);
+        }
+    }
 
     internal static string KindOf(AiLimit limit) => limit.Kind switch
     {

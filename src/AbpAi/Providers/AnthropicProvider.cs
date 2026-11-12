@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
 
 namespace AbpAi.Providers;
 
@@ -10,40 +11,45 @@ namespace AbpAi.Providers;
 /// Anthropic's Messages API, which is the gateway's own shape: the request goes as it is (system blocks as they are, and
 /// the call's provider options merged in), and the reply and stream events come back as they are. Settings:
 /// <c>anthropic-version</c> (default 2026-10-21), <c>anthropic-beta</c>, and <c>auth</c> = <c>bearer</c> for a gateway
-/// that takes the key as a bearer token.
+/// that takes the key as a bearer token. A call that may be cached (<see cref="AiRequest.Cache"/>) gets breakpoints on
+/// its last system block and its last message's last block, unless it marked its own. A busy or briefly failing
+/// provider is tried again (<see cref="AiOptions.ProviderRetries"/>) before a stream begins.
 /// </summary>
 public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvider
 {
     public const string DefaultEndpoint = "https://api.anthropic.com";
     public const string DefaultVersion = "2026-10-21";
 
+    private readonly int _retries = new AiOptions().ProviderRetries;
+
+    public AnthropicProvider(IHttpClientFactory httpClients, IOptions<AiOptions> options) : this(httpClients) => _retries = options.Value.ProviderRetries;
+
     public string Kind => "anthropic";
 
     public async Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken)
     {
-        using HttpRequestMessage request = Request(call, stream: false);
-        using HttpResponseMessage response = await httpClients.CreateClient(nameof(AnthropicProvider)).SendAsync(request, cancellationToken);
+        using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () => Request(call, stream: false), HttpCompletionOption.ResponseContentRead,
+            call.Retries ?? _retries, cancellationToken);
         string body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new AiProviderException($"Anthropic answered {(int)response.StatusCode}: {Excerpt(body)}", (int)response.StatusCode);
+            throw ProviderHttp.Failed("Anthropic", (int)response.StatusCode, body, call.Target.ApiKey);
         }
 
         using JsonDocument doc = JsonDocument.Parse(body);
         JsonElement message = doc.RootElement.Clone();
-        (int input, int output) = Tokens(message);
-        return new AiProviderReply(message, input, output);
+        Tokens tokens = TokensOf(message);
+        return new AiProviderReply(message, tokens.Input, tokens.Output) { CacheWriteTokens = tokens.CacheWrite, CacheReadTokens = tokens.CacheRead };
     }
 
     public async IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using HttpRequestMessage request = Request(call, stream: true);
-        using HttpResponseMessage response = await httpClients.CreateClient(nameof(AnthropicProvider))
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () => Request(call, stream: true), HttpCompletionOption.ResponseHeadersRead,
+            call.Retries ?? _retries, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             string body = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new AiProviderException($"Anthropic answered {(int)response.StatusCode}: {Excerpt(body)}", (int)response.StatusCode);
+            throw ProviderHttp.Failed("Anthropic", (int)response.StatusCode, body, call.Target.ApiKey);
         }
 
         await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -63,7 +69,8 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
 
             if (type == "error")
             {
-                throw new AiProviderException($"Anthropic's stream failed: {Excerpt(data)}");
+                string reason = ProviderHttp.Reason(data, call.Target.ApiKey);
+                throw new AiProviderException($"Anthropic's stream failed: {reason}") { Reason = reason };
             }
 
             yield return new AiStreamEvent(type, json);
@@ -81,13 +88,17 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
         string? after = null;
         for (int page = 0; page < 20; page++)
         {
-            using HttpRequestMessage request = new(HttpMethod.Get, Address(target, "models") + "?limit=1000" + (after is null ? "" : "&after_id=" + Uri.EscapeDataString(after)));
-            Authorize(request, target);
-            using HttpResponseMessage response = await httpClients.CreateClient(nameof(AnthropicProvider)).SendAsync(request, cancellationToken);
+            string address = Address(target, "models") + "?limit=1000" + (after is null ? "" : "&after_id=" + Uri.EscapeDataString(after));
+            using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () =>
+            {
+                HttpRequestMessage request = new(HttpMethod.Get, address);
+                Authorize(request, target);
+                return request;
+            }, HttpCompletionOption.ResponseContentRead, _retries, cancellationToken);
             string body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                throw new AiProviderException($"Anthropic answered {(int)response.StatusCode}: {Excerpt(body)}", (int)response.StatusCode);
+                throw ProviderHttp.Failed("Anthropic", (int)response.StatusCode, body, target.ApiKey);
             }
 
             using JsonDocument doc = JsonDocument.Parse(body);
@@ -108,6 +119,8 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
 
         return ids;
     }
+
+    private HttpClient Client => httpClients.CreateClient(nameof(AnthropicProvider));
 
     internal static JsonObject Body(AiProviderCall call, bool stream)
     {
@@ -144,8 +157,49 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
             body["stream"] = true;
         }
 
+        if (call.Cache || call.Request?.Cache == true)
+        {
+            MarkCache(body);
+        }
+
         ProviderOptions.MergeInto(body, call.ProviderOptions, Reserved);
         return body;
+    }
+
+    /// <summary>
+    /// Breakpoints for the provider's cache: on the last system block and on the last message's last block that may carry
+    /// one, so the next call that starts the same reads its tools, system prompt and messages from the cache. A call that
+    /// marked any <c>cache_control</c> itself is left as it is.
+    /// </summary>
+    internal static void MarkCache(JsonObject body)
+    {
+        if (body.ToJsonString().Contains("\"cache_control\"", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        JsonObject Ephemeral() => new() { ["type"] = "ephemeral" };
+        if (body["system"] is JsonValue text && text.TryGetValue(out string? system) && system.Length > 0)
+        {
+            body["system"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = system, ["cache_control"] = Ephemeral() });
+        }
+        else if (body["system"] is JsonArray { Count: > 0 } systemBlocks && systemBlocks[^1] is JsonObject lastSystem)
+        {
+            lastSystem["cache_control"] = Ephemeral();
+        }
+
+        if (body["messages"] is JsonArray { Count: > 0 } messages && messages[^1] is JsonObject last)
+        {
+            if (last["content"] is JsonValue content && content.TryGetValue(out string? words))
+            {
+                last["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = words, ["cache_control"] = Ephemeral() });
+            }
+            else if (last["content"] is JsonArray parts
+                && parts.OfType<JsonObject>().LastOrDefault(b => (string?)b["type"] is not ("thinking" or "redacted_thinking")) is { } block)
+            {
+                block["cache_control"] = Ephemeral();
+            }
+        }
     }
 
     /// <summary>The keys the gateway sets itself, never taken from a call's provider options.</summary>
@@ -196,10 +250,18 @@ public sealed class AnthropicProvider(IHttpClientFactory httpClients) : IAiProvi
         }
     }
 
-    private static (int Input, int Output) Tokens(JsonElement message) =>
-        message.TryGetProperty("usage", out JsonElement usage)
-            ? (usage.TryGetProperty("input_tokens", out JsonElement i) ? i.GetInt32() : 0, usage.TryGetProperty("output_tokens", out JsonElement o) ? o.GetInt32() : 0)
-            : (0, 0);
+    private readonly record struct Tokens(int Input, int Output, int CacheWrite, int CacheRead);
+
+    private static Tokens TokensOf(JsonElement message)
+    {
+        if (!message.TryGetProperty("usage", out JsonElement usage) || usage.ValueKind != JsonValueKind.Object)
+        {
+            return default;
+        }
+
+        static int Read(JsonElement usage, string name) => usage.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+        return new Tokens(Read(usage, "input_tokens"), Read(usage, "output_tokens"), Read(usage, "cache_creation_input_tokens"), Read(usage, "cache_read_input_tokens"));
+    }
 
     internal static string Excerpt(string body) => body.Length > 500 ? body[..500] : body;
 }

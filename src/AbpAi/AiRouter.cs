@@ -24,6 +24,7 @@ public sealed record AiRoute(string Alias, AiConnectionDescriptor Connection, st
         ModelName = ModelName,
         Tools = Tools,
         Images = Images,
+        ConnectionType = Connection.Type is { Length: > 0 } type ? type : Connection.Provider,
     };
 }
 
@@ -51,7 +52,7 @@ public sealed record AiNeeds(bool Tools = false, bool Images = false, bool Struc
 /// When the site lists what each scope may use (<see cref="AiScopeAccessModes.Listed"/>), a call in a scope reaches the
 /// site's models its access opens, and its scopes' own connections only when that access lets it connect.
 /// </summary>
-public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource source) : ITransientDependency
+public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource source, Microsoft.Extensions.Options.IOptions<AiOptions> options) : ITransientDependency
 {
     /// <summary>As <see cref="ChooseAsync(string, AiScopeChain, string, AiNeeds, CancellationToken)"/>, for a call that may need a schema.</summary>
     public Task<AiRoute> ChooseAsync(string alias, AiScopeChain chain, string dataClass, bool structured, CancellationToken ct) =>
@@ -93,7 +94,8 @@ public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource s
                 .OfType<AiRoute>()];
 
         List<AiRoute> open = [.. candidates.Where(r => !listed || r.Connection.ScopeId is not null || access?.Opens(r.Connection.Id, r.Model) == true)];
-        List<AiRoute> fit = [.. open.Where(needs.MetBy)];
+        // A host whose models' flags are only for people to read (AbpAi:CapabilitiesDecide false) has them chosen by alias, access and being on.
+        List<AiRoute> fit = options.Value.CapabilitiesDecide ? [.. open.Where(needs.MetBy)] : open;
         if (fit.Count == 0)
         {
             string what = needs.ToString();

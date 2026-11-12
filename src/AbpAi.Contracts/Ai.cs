@@ -54,6 +54,13 @@ public sealed record AiRequest(string Alias, JsonElement Messages)
 
     public int MaxTokens { get; init; } = 1024;
 
+    /// <summary>
+    /// Let the provider cache the call's start (its tools, system prompt and messages) for the next call that begins the
+    /// same, as an agent's turns do. Anthropic is told where (the last system block and the last message's last block),
+    /// unless the call marked its own <c>cache_control</c>; OpenAI-compatible providers cache without being told.
+    /// </summary>
+    public bool Cache { get; init; }
+
     /// <summary>A JSON schema the reply must follow; only models that support it are chosen.</summary>
     public JsonElement? OutputSchema { get; init; }
 
@@ -89,7 +96,15 @@ public sealed record AiRequest(string Alias, JsonElement Messages)
 public sealed record AiSubject(string Kind, string Id);
 
 /// <summary>Tokens and cost of a call.</summary>
-public sealed record AiUsage(int InputTokens, int OutputTokens, decimal Cost);
+/// <param name="InputTokens">The input tokens the provider didn't cache or read from its cache.</param>
+public sealed record AiUsage(int InputTokens, int OutputTokens, decimal Cost)
+{
+    /// <summary>Input tokens written to the provider's cache.</summary>
+    public int CacheWriteTokens { get; init; }
+
+    /// <summary>Input tokens read from the provider's cache.</summary>
+    public int CacheReadTokens { get; init; }
+}
 
 /// <summary>
 /// A reply: the assistant message (<c>role</c>, <c>content</c> blocks, <c>stop_reason</c>), the model and connection that
@@ -137,4 +152,7 @@ public sealed record AiChoice(string Alias, string Model, string Provider, Guid 
 
     /// <summary>The model takes images.</summary>
     public bool Images { get; init; } = true;
+
+    /// <summary>The host's own name for the connection's type (<see cref="AiConnectionDescriptor.Type"/>); its provider's kind when it has none.</summary>
+    public string ConnectionType { get; init; } = Provider;
 }

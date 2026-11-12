@@ -65,6 +65,18 @@ public class AiConnection : Entity<Guid>
     /// <summary>A model's own prices: its name, then input and output per million.</summary>
     public Dictionary<string, AiPrice> ModelPrices { get; set; } = [];
 
+    /// <summary>Per million input tokens written to the provider's cache; null: 1.25 times the input price.</summary>
+    public decimal? CacheWritePrice { get; set; }
+
+    /// <summary>Per million input tokens read from the provider's cache; null: a tenth of the input price.</summary>
+    public decimal? CacheReadPrice { get; set; }
+
+    /// <summary>The longest wait, in seconds, for the next part of a reply through it; null: the site's.</summary>
+    public int? IdleTimeoutSeconds { get; set; }
+
+    /// <summary>The longest, in seconds, a whole call through it may take; null: the site's.</summary>
+    public int? TotalTimeoutSeconds { get; set; }
+
     /// <summary>Its models follow a JSON schema for a reply (<see cref="AiRequest.OutputSchema"/>).</summary>
     public bool StructuredOutput { get; set; }
 
@@ -72,7 +84,9 @@ public class AiConnection : Entity<Guid>
 
     public DateTime CreatedAt { get; private set; }
 
-    public AiPrice PriceOf(string model) => ModelPrices.TryGetValue(model, out AiPrice? price) ? price : new AiPrice(InputPrice, OutputPrice);
+    public AiPrice PriceOf(string model) => ModelPrices.TryGetValue(model, out AiPrice? price)
+        ? price
+        : new AiPrice(InputPrice, OutputPrice) { CacheWrite = CacheWritePrice, CacheRead = CacheReadPrice };
 }
 
 /// <summary>An alias's target: a connection and one of its models (null: the connection's first).</summary>
@@ -211,6 +225,9 @@ public class AiLimit : Entity<Guid>
     public decimal Amount { get; set; }
 
     public DateTime CreatedAt { get; private set; }
+
+    /// <summary>The start of the period its admins were last told it's reached in: they're told once a period.</summary>
+    public DateTime? ReachedNoticeFor { get; set; }
 }
 
 /// <summary>The states of a usage record.</summary>
@@ -227,6 +244,14 @@ public static class AiUsageStates
 
     /// <summary>A reservation no one settled (the server stopped): it no longer holds anything.</summary>
     public const string Abandoned = "abandoned";
+
+    /// <summary>
+    /// The gateway refused the call before it left (a limit, no model, the data rules): it costs nothing, and its
+    /// <see cref="AiUsageRecord.Code"/> says why.
+    /// </summary>
+    public const string Refused = "refused";
+
+    public static readonly IReadOnlyList<string> All = [Reserved, Done, Failed, Abandoned, Refused];
 }
 
 /// <summary>
@@ -312,6 +337,18 @@ public class AiUsageRecord : Entity<Guid>
     public int? DurationMs { get; set; }
 
     public string? Error { get; set; }
+
+    /// <summary>Why a refused or failed call didn't answer: one of <see cref="AiRefusalCodes"/>.</summary>
+    public string? Code { get; set; }
+
+    /// <summary>Input tokens written to the provider's cache (not in <see cref="InputTokens"/>).</summary>
+    public int CacheWriteTokens { get; set; }
+
+    /// <summary>Input tokens read from the provider's cache (not in <see cref="InputTokens"/>).</summary>
+    public int CacheReadTokens { get; set; }
+
+    /// <summary>Every token the call took: in, written to the cache, read from it, and out.</summary>
+    public long AllTokens => (long)InputTokens + CacheWriteTokens + CacheReadTokens + OutputTokens;
 }
 
 /// <summary>A call's prompt and reply, kept only when the site turns that on, and only for its period.</summary>
@@ -414,4 +451,54 @@ public class AiSite : Entity<Guid>
     public string ScopeAccess { get; set; } = AiScopeAccessModes.Open;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// An export of a period's calls for support (AI8), made by the site's owner: JSON lines, gzipped, kept for
+/// <c>AbpAi:ExportDays</c> (7) and then deleted. A call's prompt and reply are in it only when the site kept them.
+/// </summary>
+public class AiExport : Entity<Guid>
+{
+    protected AiExport()
+    {
+    }
+
+    public AiExport(Guid id, Guid actorId, DateTime from, DateTime to, Guid? scopeId, DateTime expiresAt) : base(id)
+    {
+        ActorId = actorId;
+        From = from;
+        To = to;
+        ScopeId = scopeId;
+        At = DateTime.UtcNow;
+        ExpiresAt = expiresAt;
+    }
+
+    public DateTime At { get; private set; }
+
+    /// <summary>Who made it.</summary>
+    public Guid ActorId { get; private set; }
+
+    public DateTime From { get; private set; }
+
+    public DateTime To { get; private set; }
+
+    /// <summary>The scope it's of (and the scopes under it); null for the whole site.</summary>
+    public Guid? ScopeId { get; private set; }
+
+    /// <summary>The calls in it.</summary>
+    public int Calls { get; set; }
+
+    /// <summary>Of those, the ones with their prompt and reply.</summary>
+    public int Prompts { get; set; }
+
+    /// <summary>It stopped at <c>AbpAi:MaxExportCalls</c> or <c>AbpAi:MaxExportBytes</c>: the period has more calls than it holds.</summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>Its size, gzipped.</summary>
+    public long Bytes { get; set; }
+
+    public DateTime ExpiresAt { get; private set; }
+
+    /// <summary>The JSON lines, gzipped.</summary>
+    public byte[] Content { get; set; } = [];
 }

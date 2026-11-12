@@ -1,7 +1,22 @@
 namespace AbpAi;
 
 /// <summary>A price per million tokens.</summary>
-public sealed record AiPrice(decimal Input, decimal Output);
+public sealed record AiPrice(decimal Input, decimal Output)
+{
+    /// <summary>Per million input tokens written to the provider's cache; null: 1.25 times <see cref="Input"/>.</summary>
+    public decimal? CacheWrite { get; init; }
+
+    /// <summary>Per million input tokens read from the provider's cache; null: a tenth of <see cref="Input"/>.</summary>
+    public decimal? CacheRead { get; init; }
+
+    /// <summary>What a cache write costs per million, set or not.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public decimal CacheWriteOrDefault => CacheWrite ?? Input * 1.25m;
+
+    /// <summary>What a cache read costs per million, set or not.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public decimal CacheReadOrDefault => CacheRead ?? Input * 0.1m;
+}
 
 /// <summary>
 /// What one of a connection's models can do, and whether it may be called: an admin's settings for it, by the provider's
@@ -70,6 +85,12 @@ public sealed record AiConnectionDescriptor(Guid Id, Guid? ScopeId, string Name,
     /// <summary>A model's own prices, by its id.</summary>
     public IReadOnlyDictionary<string, AiPrice> ModelPrices { get; init; } = NoPrices;
 
+    /// <summary>Per million input tokens written to the provider's cache, for its models unless <see cref="ModelPrices"/> names one; null: 1.25 times the input price.</summary>
+    public decimal? CacheWritePrice { get; init; }
+
+    /// <summary>Per million input tokens read from the provider's cache; null: a tenth of the input price.</summary>
+    public decimal? CacheReadPrice { get; init; }
+
     /// <summary>Its models follow a JSON schema for a reply, unless a model's own settings say otherwise.</summary>
     public bool StructuredOutput { get; init; }
 
@@ -78,7 +99,24 @@ public sealed record AiConnectionDescriptor(Guid Id, Guid? ScopeId, string Name,
     /// <summary>It has a key (for an admin to read; the key itself comes from <see cref="IAiConnectionSource.KeyAsync"/>).</summary>
     public bool HasKey { get; init; }
 
-    public AiPrice PriceOf(string model) => ModelPrices.TryGetValue(model, out AiPrice? price) ? price : new AiPrice(InputPrice, OutputPrice);
+    /// <summary>
+    /// The host's own name for the connection's type (<c>openai-compatible</c>, <c>acme:bedrock</c>), for people to read;
+    /// null when it has none, and the provider's kind is shown.
+    /// </summary>
+    public string? Type { get; init; }
+
+    /// <summary>
+    /// The longest wait for the next part of a reply through it: a streamed call's first event and each one after it.
+    /// Null: the site's (<c>AbpAi:IdleTimeout</c>, a minute). A local model that needs minutes for its first token says so here.
+    /// </summary>
+    public TimeSpan? IdleTimeout { get; init; }
+
+    /// <summary>The longest a whole call through it may take. Null: the site's (<c>AbpAi:ProviderTimeout</c>, 10 minutes).</summary>
+    public TimeSpan? TotalTimeout { get; init; }
+
+    public AiPrice PriceOf(string model) => ModelPrices.TryGetValue(model, out AiPrice? price)
+        ? price
+        : new AiPrice(InputPrice, OutputPrice) { CacheWrite = CacheWritePrice, CacheRead = CacheReadPrice };
 
     /// <summary>A model's settings, by its id; null when it has none.</summary>
     public AiModelSettings? SettingsOf(string model) => ModelSettings.TryGetValue(model, out AiModelSettings? settings) ? settings : null;

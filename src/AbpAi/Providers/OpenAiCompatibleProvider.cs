@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
 
 namespace AbpAi.Providers;
 
@@ -18,16 +19,22 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
 {
     public const string DefaultEndpoint = "https://api.openai.com/v1";
 
+    private readonly int _retries = new AiOptions().ProviderRetries;
+
+    public OpenAiCompatibleProvider(IHttpClientFactory httpClients, IOptions<AiOptions> options) : this(httpClients) => _retries = options.Value.ProviderRetries;
+
     public string Kind => "openai";
+
+    private HttpClient Client => httpClients.CreateClient(nameof(OpenAiCompatibleProvider));
 
     public async Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken)
     {
-        using HttpRequestMessage request = Request(call, stream: false);
-        using HttpResponseMessage response = await httpClients.CreateClient(nameof(OpenAiCompatibleProvider)).SendAsync(request, cancellationToken);
+        using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () => Request(call, stream: false), HttpCompletionOption.ResponseContentRead,
+            call.Retries ?? _retries, cancellationToken);
         string body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new AiProviderException($"The provider answered {(int)response.StatusCode}: {AnthropicProvider.Excerpt(body)}", (int)response.StatusCode);
+            throw ProviderHttp.Failed("The provider", (int)response.StatusCode, body, call.Target.ApiKey);
         }
 
         using JsonDocument doc = JsonDocument.Parse(body);
@@ -36,13 +43,12 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
 
     public async IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using HttpRequestMessage request = Request(call, stream: true);
-        using HttpResponseMessage response = await httpClients.CreateClient(nameof(OpenAiCompatibleProvider))
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () => Request(call, stream: true), HttpCompletionOption.ResponseHeadersRead,
+            call.Retries ?? _retries, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             string body = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new AiProviderException($"The provider answered {(int)response.StatusCode}: {AnthropicProvider.Excerpt(body)}", (int)response.StatusCode);
+            throw ProviderHttp.Failed("The provider", (int)response.StatusCode, body, call.Target.ApiKey);
         }
 
         await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -55,9 +61,10 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
             }
 
             using JsonDocument doc = JsonDocument.Parse(data);
-            if (doc.RootElement.TryGetProperty("error", out JsonElement error))
+            if (doc.RootElement.TryGetProperty("error", out _))
             {
-                throw new AiProviderException($"The provider's stream failed: {AnthropicProvider.Excerpt(error.GetRawText())}");
+                string reason = ProviderHttp.Reason(data, call.Target.ApiKey);
+                throw new AiProviderException($"The provider's stream failed: {reason}") { Reason = reason };
             }
 
             foreach (AiStreamEvent e in translator.Add(doc.RootElement))
@@ -75,13 +82,16 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
     /// <summary>The models the server offers (<c>GET {endpoint}/models</c>).</summary>
     public async Task<IReadOnlyList<string>?> ListModelsAsync(AiTarget target, CancellationToken cancellationToken)
     {
-        using HttpRequestMessage request = new(HttpMethod.Get, Address(target, "models"));
-        Authorize(request, target);
-        using HttpResponseMessage response = await httpClients.CreateClient(nameof(OpenAiCompatibleProvider)).SendAsync(request, cancellationToken);
+        using HttpResponseMessage response = await ProviderHttp.SendAsync(Client, () =>
+        {
+            HttpRequestMessage request = new(HttpMethod.Get, Address(target, "models"));
+            Authorize(request, target);
+            return request;
+        }, HttpCompletionOption.ResponseContentRead, _retries, cancellationToken);
         string body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new AiProviderException($"The provider answered {(int)response.StatusCode}: {AnthropicProvider.Excerpt(body)}", (int)response.StatusCode);
+            throw ProviderHttp.Failed("The provider", (int)response.StatusCode, body, target.ApiKey);
         }
 
         using JsonDocument doc = JsonDocument.Parse(body);
@@ -190,7 +200,7 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
                 {
                     case "tool_result":
                         string result = block.TryGetProperty("content", out JsonElement c)
-                            ? c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : AiMessages.TextOf(JsonSerializer.SerializeToElement(new { content = c }))
+                            ? c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : ResultText(c)
                             : "";
                         if (block.TryGetProperty("is_error", out JsonElement isError) && isError.ValueKind == JsonValueKind.True)
                         {
@@ -201,6 +211,10 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
                         break;
                     case "text":
                         parts.Add(new JsonObject { ["type"] = "text", ["text"] = block.GetProperty("text").GetString() });
+                        break;
+                    case "search_result":
+                        // Chat Completions has no search results: each is its source, its title and its text, for the model to read.
+                        parts.Add(new JsonObject { ["type"] = "text", ["text"] = SearchResultText(block) });
                         break;
                     case "image" when block.TryGetProperty("source", out JsonElement source) && source.TryGetProperty("data", out JsonElement data):
                         string media = source.TryGetProperty("media_type", out JsonElement m) ? m.GetString() ?? "image/png" : "image/png";
@@ -349,9 +363,9 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
             reply["model"] = model.GetString();
         }
 
-        (int input, int output) = Usage(completion);
-        reply["usage"] = new JsonObject { ["input_tokens"] = input, ["output_tokens"] = output };
-        return new AiProviderReply(JsonSerializer.SerializeToElement(reply), input, output);
+        (int input, int output, int cached) = Usage(completion);
+        reply["usage"] = new JsonObject { ["input_tokens"] = input, ["output_tokens"] = output, ["cache_read_input_tokens"] = cached };
+        return new AiProviderReply(JsonSerializer.SerializeToElement(reply), input, output) { CacheReadTokens = cached };
     }
 
     internal static string StopReason(string? finish, bool toolUse) => finish switch
@@ -362,10 +376,70 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
         _ => toolUse ? "tool_use" : "end_turn",
     };
 
-    private static (int Input, int Output) Usage(JsonElement completion) =>
-        completion.TryGetProperty("usage", out JsonElement usage) && usage.ValueKind == JsonValueKind.Object
-            ? (usage.TryGetProperty("prompt_tokens", out JsonElement p) ? p.GetInt32() : 0, usage.TryGetProperty("completion_tokens", out JsonElement c) ? c.GetInt32() : 0)
-            : (0, 0);
+    /// <summary>A search result as text: its source, its title, then its text blocks.</summary>
+    internal static string SearchResultText(JsonElement block)
+    {
+        StringBuilder text = new();
+        if (block.TryGetProperty("source", out JsonElement source) && source.ValueKind == JsonValueKind.String)
+        {
+            text.Append("Source: ").Append(source.GetString()).Append('\n');
+        }
+
+        if (block.TryGetProperty("title", out JsonElement title) && title.ValueKind == JsonValueKind.String)
+        {
+            text.Append("Title: ").Append(title.GetString()).Append('\n');
+        }
+
+        if (block.TryGetProperty("content", out JsonElement content))
+        {
+            text.Append(content.ValueKind == JsonValueKind.String ? content.GetString() : AiMessages.TextOf(JsonSerializer.SerializeToElement(new { content })));
+        }
+
+        return text.ToString().TrimEnd();
+    }
+
+    /// <summary>A tool result's blocks as text: its text, and its search results as <see cref="SearchResultText"/> writes them.</summary>
+    private static string ResultText(JsonElement content)
+    {
+        if (content.ValueKind != JsonValueKind.Array)
+        {
+            return AiMessages.TextOf(JsonSerializer.SerializeToElement(new { content }));
+        }
+
+        List<string> parts = [];
+        foreach (JsonElement block in content.EnumerateArray())
+        {
+            string? type = block.ValueKind == JsonValueKind.Object && block.TryGetProperty("type", out JsonElement t) ? t.GetString() : null;
+            if (type == "text" && block.TryGetProperty("text", out JsonElement text))
+            {
+                parts.Add(text.GetString() ?? "");
+            }
+            else if (type == "search_result")
+            {
+                parts.Add(SearchResultText(block));
+            }
+        }
+
+        return string.Join("\n\n", parts);
+    }
+
+    /// <summary>
+    /// The tokens a reply counted: its prompt's (less the ones read from the provider's cache, which it counts in them),
+    /// its completion's, and the cached ones.
+    /// </summary>
+    private static (int Input, int Output, int Cached) Usage(JsonElement completion)
+    {
+        if (!completion.TryGetProperty("usage", out JsonElement usage) || usage.ValueKind != JsonValueKind.Object)
+        {
+            return (0, 0, 0);
+        }
+
+        int prompt = usage.TryGetProperty("prompt_tokens", out JsonElement p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32() : 0;
+        int completed = usage.TryGetProperty("completion_tokens", out JsonElement c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : 0;
+        int cached = usage.TryGetProperty("prompt_tokens_details", out JsonElement details) && details.ValueKind == JsonValueKind.Object
+            && details.TryGetProperty("cached_tokens", out JsonElement k) && k.ValueKind == JsonValueKind.Number ? Math.Clamp(k.GetInt32(), 0, prompt) : 0;
+        return (prompt - cached, completed, cached);
+    }
 
     private static JsonNode Arguments(string? json)
     {
@@ -394,6 +468,7 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
         private bool _toolUse;
         private int _input;
         private int _output;
+        private int _cached;
 
         public IEnumerable<AiStreamEvent> Add(JsonElement chunk)
         {
@@ -411,7 +486,7 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
 
             if (chunk.TryGetProperty("usage", out JsonElement usage) && usage.ValueKind == JsonValueKind.Object)
             {
-                (_input, _output) = Usage(chunk);
+                (_input, _output, _cached) = Usage(chunk);
             }
 
             if (!chunk.TryGetProperty("choices", out JsonElement choices) || choices.GetArrayLength() == 0)
@@ -486,7 +561,8 @@ public sealed class OpenAiCompatibleProvider(IHttpClientFactory httpClients) : I
             Close(events);
             events.Add(Event("message_delta", new
             {
-                type = "message_delta", delta = new { stop_reason = StopReason(_finish, _toolUse) }, usage = new { input_tokens = _input, output_tokens = _output },
+                type = "message_delta", delta = new { stop_reason = StopReason(_finish, _toolUse) },
+                usage = new { input_tokens = _input, output_tokens = _output, cache_read_input_tokens = _cached },
             }));
             events.Add(Event("message_stop", new { type = "message_stop" }));
             return events;

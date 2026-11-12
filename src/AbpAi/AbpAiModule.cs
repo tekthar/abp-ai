@@ -16,7 +16,7 @@ namespace AbpAi;
 [DependsOn(typeof(Volo.Abp.EntityFrameworkCore.PostgreSql.AbpEntityFrameworkCorePostgreSqlModule), typeof(AbpSecurityModule))]
 public class AbpAiModule : AbpModule
 {
-    public const string Version = "0.3.0";
+    public const string Version = "0.4.0";
 
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
@@ -31,6 +31,7 @@ public class AbpAiModule : AbpModule
         services.TryAddSingleton<IAiAccounts, NoAiGroups>();
         services.TryAddTransient<IAiNotices, LoggedAiNotices>();
         services.TryAddTransient<IAiConnectionSource, StoredAiConnections>();
+        services.TryAddTransient<IAiAudit, LoggedAiAudit>();
 
         // The built-in providers; others plug in by adding an IAiProvider (the last of a kind wins).
         services.AddHttpClient(nameof(AnthropicProvider), c => c.Timeout = Timeout.InfiniteTimeSpan);

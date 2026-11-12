@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp;
 using Volo.Abp.DependencyInjection;
@@ -46,6 +47,37 @@ public sealed record AiConnectionInput(string Name, string Provider, IReadOnlyLi
     public IReadOnlyDictionary<string, AiPrice>? ModelPrices { get; init; }
     public bool StructuredOutput { get; init; }
     public bool Enabled { get; init; } = true;
+
+    /// <summary>Per million input tokens written to the provider's cache; null: 1.25 times the input price.</summary>
+    public decimal? CacheWritePrice { get; init; }
+
+    /// <summary>Per million input tokens read from the provider's cache; null: a tenth of the input price.</summary>
+    public decimal? CacheReadPrice { get; init; }
+
+    /// <summary>
+    /// The longest wait, in seconds (1 to 3600), for the next part of a reply: a streamed call's first event and each one
+    /// after it. Null keeps what's set (a new connection has the site's); 0 goes back to the site's.
+    /// </summary>
+    public int? IdleTimeoutSeconds { get; init; }
+
+    /// <summary>The longest, in seconds (1 to 86400), a whole call may take. Null keeps what's set; 0 goes back to the site's.</summary>
+    public int? TotalTimeoutSeconds { get; init; }
+
+    /// <summary>Test the connection once it's saved (<see cref="AiAdminService.TestConnectionAsync"/>); how it went is in <see cref="AiConnectionInfo.Test"/>.</summary>
+    public bool Test { get; init; }
+}
+
+/// <summary>
+/// How a connection's test went: one small call to a model, answered (with the time it took) or not, with the provider's
+/// status and its own reason ("invalid x-api-key", "model not found", "it couldn't be reached"). Never the key.
+/// </summary>
+public sealed record AiConnectionTest(bool Ok, string Model, int ElapsedMs, DateTime At)
+{
+    /// <summary>The provider's answer's status, when it answered with an error.</summary>
+    public int? Status { get; init; }
+
+    /// <summary>Why it failed, in the provider's own words where it gave them.</summary>
+    public string? Reason { get; init; }
 }
 
 /// <summary>A connection as an admin reads it: whether it has a key, never the key.</summary>
@@ -55,6 +87,22 @@ public sealed record AiConnectionInfo(Guid Id, Guid? ScopeId, string Name, strin
 {
     /// <summary>Its models' settings, by their ids.</summary>
     public IReadOnlyDictionary<string, AiModelSettings> ModelSettings { get; init; } = new Dictionary<string, AiModelSettings>();
+
+    public decimal? CacheWritePrice { get; init; }
+
+    public decimal? CacheReadPrice { get; init; }
+
+    /// <summary>Its own idle timeout, in seconds; null: the site's.</summary>
+    public int? IdleTimeoutSeconds { get; init; }
+
+    /// <summary>Its own total timeout, in seconds; null: the site's.</summary>
+    public int? TotalTimeoutSeconds { get; init; }
+
+    /// <summary>The host's own name for its type, when it keeps the connection and names one.</summary>
+    public string? Type { get; init; }
+
+    /// <summary>How its test went, when it was saved with <see cref="AiConnectionInput.Test"/>.</summary>
+    public AiConnectionTest? Test { get; init; }
 }
 
 public sealed record AiAliasInfo(Guid Id, Guid? ScopeId, string Name, IReadOnlyList<AiAliasTarget> Targets, DateTime UpdatedAt);
@@ -212,8 +260,8 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             Apply(connection, input);
             db.AiConnections.Add(connection);
             await db.SaveChangesAsync(ct);
-            return Info(connection);
-        }, cancellationToken: ct);
+            return connection;
+        }, cancellationToken: ct).ContinueWithTestAsync(this, input, ct);
     }
 
     public async Task<AiConnectionInfo> UpdateConnectionAsync(AiActor actor, Guid id, AiConnectionInput input, CancellationToken ct)
@@ -230,8 +278,83 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             connection.Provider = input.Provider.Trim().ToLowerInvariant();
             Apply(connection, input);
             await db.SaveChangesAsync(ct);
-            return Info(connection);
-        }, cancellationToken: ct);
+            return connection;
+        }, cancellationToken: ct).ContinueWithTestAsync(this, input, ct);
+    }
+
+    /// <summary>
+    /// Tests a connection: one small call (a few tokens) to the model named (by its id or name), else its first that's
+    /// on, straight to its provider, within its idle timeout and with no second try. It says whether it answered and how
+    /// long it took, or the provider's status and its own reason. Nothing is kept on the ledger. From wherever
+    /// connections are kept, so a host that keeps its own tests them too.
+    /// </summary>
+    public async Task<AiConnectionTest> TestConnectionAsync(AiActor actor, Guid? scopeId, Guid connectionId, string? model, CancellationToken ct)
+    {
+        await AdminAsync(actor, scopeId, ct);
+        AiConnectionDescriptor connection = (await source.ListAsync(scopeId is { } scope ? [scope] : [], ct)).FirstOrDefault(c => c.Id == connectionId && c.ScopeId == scopeId)
+            ?? throw new EntityNotFoundException(typeof(AiConnection), connectionId);
+        return await TestAsync(connection, model, ct);
+    }
+
+    /// <summary>A saved connection as an admin reads it, with its test when the input asked for one.</summary>
+    internal async Task<AiConnectionInfo> SavedAsync(AiConnection connection, AiConnectionInput input, CancellationToken ct) =>
+        input.Test ? Info(connection) with { Test = await TestAsync(StoredAiConnections.Describe(connection), null, ct) } : Info(connection);
+
+    internal async Task<AiConnectionTest> TestAsync(AiConnectionDescriptor connection, string? model, CancellationToken ct)
+    {
+        DateTime at = DateTime.UtcNow;
+        string chosen = model is { Length: > 0 } ? connection.ModelIdOf(model) ?? model : AiRouter.DefaultModel(connection) ?? connection.Models.FirstOrDefault() ?? "";
+        IAiProvider? provider = providers.LastOrDefault(p => string.Equals(p.Kind, connection.Provider, StringComparison.OrdinalIgnoreCase));
+        if (provider is null)
+        {
+            return new AiConnectionTest(false, chosen, 0, at) { Reason = $"No provider \"{connection.Provider}\" is installed." };
+        }
+
+        if (chosen.Length == 0)
+        {
+            return new AiConnectionTest(false, chosen, 0, at) { Reason = "It lists no models to call." };
+        }
+
+        AiTimeoutsOf timeouts = AiTimeoutsOf.For(connection, options.Value);
+        TimeSpan wait = timeouts.Idle < timeouts.Total ? timeouts.Idle : timeouts.Total;
+        Stopwatch watch = Stopwatch.StartNew();
+        string? key = null;
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(wait);
+        try
+        {
+            key = await source.KeyAsync(connection.Id, ct);
+            AiTarget target = new(connection.Id, connection.Name, connection.Endpoint, key, chosen, connection.Settings);
+            await provider.CompleteAsync(new AiProviderCall(target, AiMessages.User("Reply with OK."), null, null, 16, null)
+            {
+                Purpose = "connection-test",
+                Retries = 0,
+            }, limit.Token);
+            return new AiConnectionTest(true, chosen, (int)watch.ElapsedMilliseconds, at);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            int elapsed = (int)watch.ElapsedMilliseconds;
+            return ex switch
+            {
+                OperationCanceledException => new AiConnectionTest(false, chosen, elapsed, at) { Reason = $"It didn't answer in {AiTimeoutsOf.Words(wait)}." },
+                AiProviderException failed => new AiConnectionTest(false, chosen, elapsed, at)
+                {
+                    Status = failed.Status,
+                    Reason = failed.Reason ?? Providers.ProviderHttp.Masked(failed.Message, key),
+                },
+                HttpRequestException unreached => new AiConnectionTest(false, chosen, elapsed, at)
+                {
+                    Status = unreached.StatusCode is { } code ? (int)code : null,
+                    Reason = $"It couldn't be reached: {Providers.ProviderHttp.Masked(unreached.InnerException?.Message ?? unreached.Message, key)}",
+                },
+                _ => new AiConnectionTest(false, chosen, elapsed, at) { Reason = Providers.ProviderHttp.Masked(ex.Message, key) },
+            };
+        }
     }
 
     public async Task DeleteConnectionAsync(AiActor actor, Guid id, CancellationToken ct)
@@ -370,6 +493,39 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     public async Task<AiLimitInfo> SetLimitAsync(AiActor actor, Guid? scopeId, AiLimitInput input, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
+        return await SetCheckedLimitAsync(scopeId, input, ct);
+    }
+
+    /// <summary>
+    /// An account's own limits on the site (an agent's), which count its calls everywhere: for the site's admins and the
+    /// account's (<see cref="IAiRights.AdministersAccountAsync"/>).
+    /// </summary>
+    public async Task<List<AiLimitInfo>> ListAccountLimitsAsync(AiActor actor, Guid accountId, CancellationToken ct)
+    {
+        await AccountAdminAsync(actor, accountId, ct);
+        List<AiLimit> found = await aiDb.RunAsync(db => db.AiLimits.AsNoTracking()
+            .Where(l => l.ScopeId == null && l.AccountId == accountId && (l.Kind == AiLimitKinds.Account || l.Kind == AiLimitKinds.CallTokens))
+            .OrderBy(l => l.Kind).ThenBy(l => l.Measure).ThenBy(l => l.Period).ToListAsync(ct), cancellationToken: ct);
+        return [.. found.Select(Info)];
+    }
+
+    /// <summary>
+    /// Sets one of an account's own limits on the site: <c>account</c> (over a period) or <c>call-tokens</c>, for the
+    /// account named whatever the input says. One of the same kind, measure and period is changed in place.
+    /// </summary>
+    public async Task<AiLimitInfo> SetAccountLimitAsync(AiActor actor, Guid accountId, AiLimitInput input, CancellationToken ct)
+    {
+        await AccountAdminAsync(actor, accountId, ct);
+        if (input.Kind is not (AiLimitKinds.Account or AiLimitKinds.CallTokens))
+        {
+            throw new UserFriendlyException("An account's own limit is account (over a period) or call-tokens.", AiErrorCodes.Invalid);
+        }
+
+        return await SetCheckedLimitAsync(null, input with { AccountId = accountId, GroupId = null }, ct);
+    }
+
+    private async Task<AiLimitInfo> SetCheckedLimitAsync(Guid? scopeId, AiLimitInput input, CancellationToken ct)
+    {
         bool callTokens = input.Kind == AiLimitKinds.CallTokens;
         string measure = callTokens ? AiLimitMeasures.Tokens : input.Measure ?? AiLimitMeasures.Cost;
         string period = callTokens ? "" : input.Period ?? "";
@@ -404,7 +560,15 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     {
         AiLimit limit = await aiDb.RunAsync(db => db.AiLimits.AsNoTracking().FirstOrDefaultAsync(l => l.Id == id, ct), cancellationToken: ct)
             ?? throw new EntityNotFoundException(typeof(AiLimit), id);
-        await AdminAsync(actor, limit.ScopeId, ct);
+        if (limit is { ScopeId: null, AccountId: { } account, Kind: AiLimitKinds.Account or AiLimitKinds.CallTokens })
+        {
+            await AccountAdminAsync(actor, account, ct);
+        }
+        else
+        {
+            await AdminAsync(actor, limit.ScopeId, ct);
+        }
+
         await aiDb.RunAsync(db => db.AiLimits.Where(l => l.Id == id).ExecuteDeleteAsync(ct), cancellationToken: ct);
     }
 
@@ -437,6 +601,14 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         if (!await AdministersAsync(actor, scopeId, ct))
         {
             throw new UserFriendlyException(scopeId is null ? "Only the site's admins set the site's AI." : "Only this scope's admins set its AI.", AiErrorCodes.Forbidden);
+        }
+    }
+
+    private async Task AccountAdminAsync(AiActor actor, Guid accountId, CancellationToken ct)
+    {
+        if (!await rights.IsSiteAdminAsync(actor, ct) && !await rights.AdministersAccountAsync(actor, accountId, ct))
+        {
+            throw new UserFriendlyException("Only the site's admins and this account's admins set its own AI limits.", AiErrorCodes.Forbidden);
         }
     }
 
@@ -512,6 +684,19 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         connection.ModelPrices = input.ModelPrices?.ToDictionary() ?? [];
         connection.StructuredOutput = input.StructuredOutput;
         connection.Enabled = input.Enabled;
+        connection.CacheWritePrice = input.CacheWritePrice;
+        connection.CacheReadPrice = input.CacheReadPrice;
+        if (input.IdleTimeoutSeconds is { } idle)
+        {
+            connection.IdleTimeoutSeconds = idle == 0 ? null : idle is >= 1 and <= 3600 ? idle
+                : throw new UserFriendlyException("A connection's idle timeout is from 1 second to an hour (0: the site's).", AiErrorCodes.Invalid);
+        }
+
+        if (input.TotalTimeoutSeconds is { } total)
+        {
+            connection.TotalTimeoutSeconds = total == 0 ? null : total is >= 1 and <= 86_400 ? total
+                : throw new UserFriendlyException("A connection's total timeout is from 1 second to a day (0: the site's).", AiErrorCodes.Invalid);
+        }
 
         // Settings only for the models it offers; a model whose price changed has it said when.
         Dictionary<string, AiModelSettings> settings = input.ModelSettings is { } given ? CheckedSettings(connection, given) : connection.ModelSettings;
@@ -597,9 +782,21 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         c.Labels, c.Settings, c.InputPrice, c.OutputPrice, c.ModelPrices, c.StructuredOutput, c.Enabled)
     {
         ModelSettings = c.ModelSettings,
+        CacheWritePrice = c.CacheWritePrice,
+        CacheReadPrice = c.CacheReadPrice,
+        IdleTimeoutSeconds = c.IdleTimeout is { } idle ? (int)idle.TotalSeconds : null,
+        TotalTimeoutSeconds = c.TotalTimeout is { } total ? (int)total.TotalSeconds : null,
+        Type = c.Type,
     };
 
     private static AiAliasInfo Info(AiAlias a) => new(a.Id, a.ScopeId, a.Name, a.Targets, a.UpdatedAt);
 
     private static AiLimitInfo Info(AiLimit l) => new(l.Id, l.ScopeId, l.Kind, l.Period, l.Amount, l.AccountId, l.GroupId) { Measure = l.Measure };
+}
+
+internal static class AiConnectionSaves
+{
+    /// <summary>A connection just saved, as an admin reads it: tested once its save is done, when the input asks.</summary>
+    public static async Task<AiConnectionInfo> ContinueWithTestAsync(this Task<AiConnection> saving, AiAdminService admin, AiConnectionInput input, CancellationToken ct) =>
+        await admin.SavedAsync(await saving, input, ct);
 }

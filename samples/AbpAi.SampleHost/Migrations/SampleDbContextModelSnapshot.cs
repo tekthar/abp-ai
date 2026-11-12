@@ -59,6 +59,14 @@ namespace AbpAi.SampleHost.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal?>("CacheReadPrice")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal?>("CacheWritePrice")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -73,6 +81,9 @@ namespace AbpAi.SampleHost.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<int?>("IdleTimeoutSeconds")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("InputPrice")
                         .HasPrecision(18, 6)
@@ -123,7 +134,11 @@ namespace AbpAi.SampleHost.Migrations
                     b.Property<bool>("StructuredOutput")
                         .HasColumnType("boolean");
 
-                    b.HasKey("Id");
+                    b.Property<int?>("TotalTimeoutSeconds")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id")
+                        .HasName("PK_ai_connections");
 
                     b.HasIndex("ScopeId", "Name")
                         .IsUnique();
@@ -131,6 +146,54 @@ namespace AbpAi.SampleHost.Migrations
                     NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("ScopeId", "Name"), false);
 
                     b.ToTable("connections", "ai");
+                });
+
+            modelBuilder.Entity("AbpAi.AiExport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Bytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Calls")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("From")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Prompts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ScopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("To")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Truncated")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id")
+                        .HasName("PK_ai_exports");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("IX_ai_exports_ExpiresAt");
+
+                    b.ToTable("exports", "ai");
                 });
 
             modelBuilder.Entity("AbpAi.AiLimit", b =>
@@ -167,6 +230,9 @@ namespace AbpAi.SampleHost.Migrations
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime?>("ReachedNoticeFor")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid?>("ScopeId")
                         .HasColumnType("uuid");
@@ -285,6 +351,20 @@ namespace AbpAi.SampleHost.Migrations
 
                     b.Property<DateTime>("At")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CacheReadTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("CacheWriteTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Connection")
                         .IsRequired()

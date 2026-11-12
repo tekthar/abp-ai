@@ -20,7 +20,7 @@ namespace AbpAi.Host.Tests;
 /// localhost:5432 (postgres/postgres), or the server ABP_AI_TEST_POSTGRES names.
 /// </summary>
 [Collection(HostCollection.Name)]
-public sealed class GatewayHostTests : IAsyncLifetime
+public sealed partial class GatewayHostTests : IAsyncLifetime
 {
     /// <summary>The Postgres server the host tests make their databases on.</summary>
     internal static readonly string Server =
@@ -41,6 +41,10 @@ public sealed class GatewayHostTests : IAsyncLifetime
     private readonly string _database = "abp_ai_host_" + Guid.NewGuid().ToString("N")[..12];
     private readonly RecordingNotices _notices = new();
     private readonly AcmeProvider _acme = new();
+    private readonly SlowProvider _slow = new();
+    private readonly FussyProvider _fussy = new();
+    private readonly CachingProvider _caching = new();
+    private readonly RecordingAudit _audit = new();
     private WebApplicationFactory<Program>? _factory;
     private Guid _publicCloud;
     private Guid _onPrem;
@@ -51,7 +55,13 @@ public sealed class GatewayHostTests : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.ConfigureServices(s =>
         {
             s.Replace(ServiceDescriptor.Singleton<IAiNotices>(_notices));
+            s.Replace(ServiceDescriptor.Singleton<IAiAudit>(_audit));
             s.AddSingleton<IAiProvider>(_acme);
+            s.AddSingleton<IAiProvider>(_slow);
+            s.AddSingleton<IAiProvider>(_fussy);
+            s.AddSingleton<IAiProvider>(_caching);
+            // A short idle timeout for the site, so the timeouts' tests run in seconds; the demo model answers at once.
+            s.PostConfigure<AiOptions>(o => o.IdleTimeout = TimeSpan.FromSeconds(2));
         }));
         _ = _factory.Server; // starts the host, which makes the database
 
@@ -315,7 +325,12 @@ public sealed class GatewayHostTests : IAsyncLifetime
 
         Assert.All(script.Calls, c => Assert.True(c.Target.Connection == "on-prem" || !AiMessages.LastUserText(c.Messages).Contains("rows")));
         Assert.Equal(["on-prem", "public-cloud", "on-prem"], script.Calls.Select(c => c.Target.Connection));
-        Assert.Equal(3, await Db(db => db.AiUsage.CountAsync()));
+        Assert.Equal(3, await Db(db => db.AiUsage.CountAsync(r => r.State == AiUsageStates.Done)));
+
+        // The two refusals are kept on the ledger, at no cost, with why.
+        List<AiUsageRecord> kept = await Db(db => db.AiUsage.Where(r => r.State == AiUsageStates.Refused).ToListAsync());
+        Assert.Equal(2, kept.Count);
+        Assert.All(kept, r => Assert.Equal((AiRefusalCodes.DataNotAllowed, 0m), (r.Code, r.Cost)));
     }
 
     [Fact]
@@ -594,10 +609,11 @@ public sealed class GatewayHostTests : IAsyncLifetime
         Assert.True(record.InputTokens > 1000, $"{record.InputTokens} tokens in.");
         Assert.Contains("ephemeral", await Db(db => db.AiPrompts.Where(p => p.Id == reply.UsageId).Select(p => p.System).SingleAsync()));
 
-        await Assert.ThrowsAsync<ArgumentException>(() => Get<IAi>().CompleteAsync(AiRequest.Text("smart", "Hi") with
+        AiRefusedException invalid = await Assert.ThrowsAsync<AiRefusedException>(() => Get<IAi>().CompleteAsync(AiRequest.Text("smart", "Hi") with
         {
             ProviderOptions = JsonSerializer.SerializeToElement(new[] { 1 }),
         }));
+        Assert.Equal(AiRefusalCodes.Invalid, invalid.Code);
     }
 
     // Models with what they can do -----------------------------------------------------------------------------------
@@ -767,11 +783,23 @@ public sealed class GatewayHostTests : IAsyncLifetime
     {
         public List<AiLimitNotice> Heard { get; } = [];
 
+        public List<AiLimitNotice> Reached { get; } = [];
+
         public Task LimitNearingAsync(AiLimitNotice notice, CancellationToken cancellationToken)
         {
             lock (Heard)
             {
                 Heard.Add(notice);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task LimitReachedAsync(AiLimitNotice notice, CancellationToken cancellationToken)
+        {
+            lock (Reached)
+            {
+                Reached.Add(notice);
             }
 
             return Task.CompletedTask;

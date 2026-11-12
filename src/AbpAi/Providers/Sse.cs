@@ -62,6 +62,10 @@ internal sealed class AiMessageBuilder
 
     public int OutputTokens { get; private set; }
 
+    public int CacheWriteTokens { get; private set; }
+
+    public int CacheReadTokens { get; private set; }
+
     public void Add(AiStreamEvent e)
     {
         JsonElement data = e.Data;
@@ -93,6 +97,14 @@ internal sealed class AiMessageBuilder
                         break;
                     case "signature_delta":
                         target["signature"] = delta.GetProperty("signature").GetString();
+                        break;
+                    case "citations_delta" when delta.TryGetProperty("citation", out JsonElement citation):
+                        if (target["citations"] is not JsonArray citations)
+                        {
+                            target["citations"] = citations = [];
+                        }
+
+                        citations.Add(JsonNode.Parse(citation.GetRawText()));
                         break;
                     case "input_json_delta":
                         int index = data.GetProperty("index").GetInt32();
@@ -147,6 +159,16 @@ internal sealed class AiMessageBuilder
         if (usage.TryGetProperty("output_tokens", out JsonElement output) && output.ValueKind == JsonValueKind.Number)
         {
             OutputTokens = output.GetInt32();
+        }
+
+        if (usage.TryGetProperty("cache_creation_input_tokens", out JsonElement written) && written.ValueKind == JsonValueKind.Number && written.GetInt32() > 0)
+        {
+            CacheWriteTokens = written.GetInt32();
+        }
+
+        if (usage.TryGetProperty("cache_read_input_tokens", out JsonElement read) && read.ValueKind == JsonValueKind.Number && read.GetInt32() > 0)
+        {
+            CacheReadTokens = read.GetInt32();
         }
     }
 
