@@ -55,8 +55,9 @@ Before a call leaves, its estimate is reserved under one lock, so calls at the s
 together. The estimate is its text's tokens in (characters over `CharsPerToken`, system blocks counted as they're
 sent) and all of its `MaxTokens` out: in cost at its model's prices, in tokens as they are, and one call. After it
 answers, the record is settled to what it took: its tokens in, written to the provider's cache, read from it, and
-out, at its model's prices for each. Token limits count every one of them. A provider's failure costs nothing and
-isn't counted, nor is a refused call. A reservation no one settles (the server stopped) stops holding after
+out, at its model's prices for each. Token limits count every one of them. A provider's failure before it answered
+costs nothing and isn't counted, nor is a refused call; a stream that failed after it began costs what it had used,
+which counts in cost and tokens (not as a call). A reservation no one settles (the server stopped) stops holding after
 `ReservationTimeout`.
 
 A minute is the minute on the clock, not the last sixty seconds: a limit of 30 calls a minute lets 30 through in each

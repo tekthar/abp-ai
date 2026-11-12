@@ -114,9 +114,11 @@ public sealed class AiService(AiRouter router, AiScopeChains chains, AiLedger le
                 }
                 catch (Exception ex)
                 {
+                    // A stream that failed after it began costs what it had used: the provider charged for it.
                     ended = true;
                     Exception refusal = Refusal(ex, call, cancellationToken, total, idle, timeouts);
-                    await ledger.FailAsync(reservation, refusal.Message, (int)watch.ElapsedMilliseconds, (refusal as AiRefusedException)?.Code);
+                    AiSettlement used = new(builder.InputTokens, builder.OutputTokens, builder.CacheWriteTokens, builder.CacheReadTokens);
+                    await ledger.FailAsync(reservation, refusal.Message, (int)watch.ElapsedMilliseconds, (refusal as AiRefusedException)?.Code, used, Cost(call.Route, used));
                     throw refusal;
                 }
 

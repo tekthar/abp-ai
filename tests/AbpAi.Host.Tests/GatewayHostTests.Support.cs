@@ -26,7 +26,11 @@ public sealed partial class GatewayHostTests
     [Fact]
     public async Task A_provider_that_stops_sending_mid_stream_ends_the_call_within_the_idle_timeout()
     {
-        await Get<AiAdminService>().CreateConnectionAsync(SiteAdmin, null, new AiConnectionInput("stalls", SlowProvider.TheKind, ["stall"], Every), default);
+        // A thousand per million tokens in and out.
+        await Get<AiAdminService>().CreateConnectionAsync(SiteAdmin, null, new AiConnectionInput("stalls", SlowProvider.TheKind, ["stall"], Every)
+        {
+            InputPrice = 1000, OutputPrice = 1000,
+        }, default);
 
         Stopwatch watch = Stopwatch.StartNew();
         List<string> seen = [];
@@ -43,8 +47,12 @@ public sealed partial class GatewayHostTests
         Assert.Contains("idle timeout", refused.Message);
         Assert.Equal("message_start", Assert.Single(seen));
         Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
+        // It had begun: it costs what it used (its start counted 10 tokens in and 1 out), and the limits count that.
         AiUsageRecord record = await Db(db => db.AiUsage.SingleAsync(r => r.Model == "stall"));
-        Assert.Equal((AiUsageStates.Failed, AiRefusalCodes.Timeout, 0m), (record.State, record.Code, record.Cost));
+        Assert.Equal((AiUsageStates.Failed, AiRefusalCodes.Timeout, 10, 1, 0.011m), (record.State, record.Code, record.InputTokens, record.OutputTokens, record.Cost));
+        await Get<AiAdminService>().SetLimitAsync(SiteAdmin, null, new AiLimitInput(AiLimitKinds.Total, AiPeriods.Day, 0.025m), default);
+        AiRefusedException over = await Assert.ThrowsAsync<AiRefusedException>(() => Ask(Pipeline, Cy));
+        Assert.Equal((AiRefusalCodes.OverLimit, 0.011m), (over.Code, over.Limit!.Spent));
     }
 
     [Fact]

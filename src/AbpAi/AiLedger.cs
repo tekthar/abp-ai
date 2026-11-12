@@ -103,8 +103,10 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
             foreach ((AiLimit limit, Guid? whose) in applicable)
             {
                 (DateTime start, DateTime end) = AiPeriods.Of(limit.Period, now);
+                // What answered, what's running, and a stream that failed halfway, at what it used.
                 IQueryable<AiUsageRecord> counted = db.AiUsage.AsNoTracking().Where(r => r.At >= start
-                    && (r.State == AiUsageStates.Done || (r.State == AiUsageStates.Reserved && r.At >= liveSince)));
+                    && (r.State == AiUsageStates.Done || (r.State == AiUsageStates.Reserved && r.At >= liveSince)
+                        || (r.State == AiUsageStates.Failed && (r.Cost > 0 || r.InputTokens > 0 || r.OutputTokens > 0))));
                 if (limit.ScopeId is { } scope)
                 {
                     counted = counted.Where(r => r.ScopePath.Contains(scope));
@@ -121,7 +123,7 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
                     AiLimitMeasures.Tokens => await counted.SumAsync(r => r.State == AiUsageStates.Reserved
                         ? (long)r.ReservedTokens
                         : (long)r.InputTokens + r.OutputTokens + r.CacheWriteTokens + r.CacheReadTokens, ct),
-                    AiLimitMeasures.Requests => await counted.CountAsync(ct),
+                    AiLimitMeasures.Requests => await counted.CountAsync(r => r.State != AiUsageStates.Failed, ct),
                     _ => await counted.SumAsync(r => r.Cost, ct),
                 };
                 decimal adds = limit.Measure switch
@@ -214,13 +216,24 @@ public sealed class AiLedger(AiDb aiDb, IAiAccounts accounts, IAiNotices notices
 
     /// <summary>The call failed or was stopped: it costs nothing, and its error and why (a <see cref="AiRefusalCodes"/>) are kept.</summary>
     public Task FailAsync(AiReservation reservation, string error, int durationMs, string? code) =>
+        FailAsync(reservation, error, durationMs, code, new AiSettlement(0, 0, 0, 0), 0m);
+
+    /// <summary>
+    /// The call failed after the provider had begun to answer (a stream that stopped halfway): it costs what it had used,
+    /// which the limits count in cost and tokens (not as a call), and its error and why are kept.
+    /// </summary>
+    public Task FailAsync(AiReservation reservation, string error, int durationMs, string? code, AiSettlement used, decimal cost) =>
         aiDb.RunAsync(async db =>
         {
             AiUsageRecord? record = await db.AiUsage.FirstOrDefaultAsync(r => r.Id == reservation.UsageId);
             if (record is not null)
             {
                 record.State = AiUsageStates.Failed;
-                record.Cost = 0;
+                record.Cost = cost;
+                record.InputTokens = used.InputTokens;
+                record.OutputTokens = used.OutputTokens;
+                record.CacheWriteTokens = used.CacheWriteTokens;
+                record.CacheReadTokens = used.CacheReadTokens;
                 record.DurationMs = durationMs;
                 record.Error = error.Length > 1000 ? error[..1000] : error;
                 record.Code = code;

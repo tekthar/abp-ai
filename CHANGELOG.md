@@ -61,6 +61,9 @@ AbpAi040`), with the changes below.
   `ArgumentException`.
 - A streamed call is bounded by its total timeout too; before, only a call that wasn't streamed was. A stream longer
   than 10 minutes needs its connection's `TotalTimeoutSeconds` raised.
+- A stream that fails after it began (it timed out, or the provider broke off) costs what it had used, as one the
+  caller stopped reading does; the limits count it in cost and tokens, not as a call. A call that fails before its
+  first event still costs nothing. `AiLedger.FailAsync` takes what was used.
 - A provider's error says the provider's own reason (its `error.message`) rather than the start of its body, with the
   key and anything shaped like one read `[key]`.
 - The demo model's reply names the model the call went to and carries its usage; its stream comes in small pieces,
