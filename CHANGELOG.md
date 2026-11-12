@@ -22,7 +22,7 @@ All notable changes to AbpAi are written here. The format follows
 - **Live chats:** `AiAgentModels.StreamAsync`, for AbpAgent 0.3.0's `IAgentModels.StreamAsync`: the Messages API's
   events as they come, then the whole reply; a refusal before the first event is thrown, and a failure after it (or a
   model that declines) is the Messages API's `error` event with the gateway's code as its type. AbpAi.Agents takes
-  AbpAgent 0.3.0.
+  AbpAgent 0.3.1.
 - An embedding call that asks for a size (`Dimensions`) gets vectors of that size, or is refused (`provider`).
 
 ### Fixed
