@@ -62,6 +62,15 @@ public interface IAiAgentCalls
     /// </summary>
     Task<AiAgentCallInfo> DescribeEmbedAsync(AgentEmbedRequest request, CancellationToken cancellationToken) =>
         Task.FromResult(new AiAgentCallInfo(null, null));
+
+    /// <summary>
+    /// A refusal as AbpAgent takes it, for a turn (<paramref name="turn"/>) or an embedding (<paramref name="embed"/>):
+    /// the code a run ends with and the words people read, in a run's error and a live chat's <c>error</c> event. The
+    /// default is the gateway's own code and words; a host that words its AI's refusals its own way says them here, so
+    /// an agent's read the same as its other AI.
+    /// </summary>
+    AgentModelRefusedException Refused(AiRefusedException refused, AgentModelRequest? turn, AgentEmbedRequest? embed) =>
+        new(refused.Code, refused.Message);
 }
 
 public sealed class NoAiAgentCallInfo : IAiAgentCalls
@@ -73,10 +82,11 @@ public sealed class NoAiAgentCallInfo : IAiAgentCalls
 /// AbpAgent's model on AbpAi: a run's call names the agent's alias, the agent's account and the run's scope, so the
 /// gateway's aliases, the per-agent and per-person limits and the data rules all apply, and its usage is recorded as
 /// <c>agent:{key}</c> about the run's item. Each turn may be cached by the provider (<see cref="AiAgentCallInfo.Cache"/>). A
-/// refusal ends the run with the gateway's code, and so does a model that declines to answer (its <c>stop_reason</c> is
-/// <c>refusal</c>), with the code <c>refusal</c>. A live chat's turn streams (<see cref="StreamAsync"/>): the Messages API's
-/// events as the model writes them, then the whole reply; a refusal before the first event is thrown, and a failure after
-/// it is the Messages API's <c>error</c> event, its type the gateway's code.
+/// refusal ends the run with the gateway's code (or the host's, <see cref="IAiAgentCalls.Refused"/>), and so does a model
+/// that declines to answer (its <c>stop_reason</c> is <c>refusal</c>), with the code <c>refusal</c>. A live chat's turn
+/// streams (<see cref="StreamAsync"/>): the Messages API's events as the model writes them, then the whole reply; a refusal
+/// before the first event is thrown, and a failure after it is the Messages API's <c>error</c> event, its type the
+/// refusal's code.
 /// </summary>
 public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
 {
@@ -98,7 +108,7 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
         }
         catch (AiRefusedException ex)
         {
-            throw new AgentModelRefusedException(ex.Code, ex.Message);
+            throw calls.Refused(ex, request, null);
         }
     }
 
@@ -124,7 +134,7 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
                 }
                 catch (AiRefusedException ex) when (!started)
                 {
-                    throw new AgentModelRefusedException(ex.Code, ex.Message);
+                    throw calls.Refused(ex, request, null);
                 }
                 catch (AiRefusedException ex)
                 {
@@ -133,8 +143,9 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
 
                 if (failed is not null)
                 {
-                    // It began: the run keeps what was written so far, and ends with the gateway's code as the error's type.
-                    yield return Error(failed.Code, failed.Message);
+                    // It began: the run keeps what was written so far, and ends with the refusal's code as the error's type.
+                    AgentModelRefusedException said = calls.Refused(failed, request, null);
+                    yield return Error(said.Code, said.Message);
                     yield break;
                 }
 
@@ -219,7 +230,7 @@ public sealed class AiAgentEmbeddings(IAi ai, IAiAgentCalls calls) : IAgentEmbed
         }
         catch (AiRefusedException ex)
         {
-            throw new AgentModelRefusedException(ex.Code, ex.Message);
+            throw calls.Refused(ex, null, request);
         }
     }
 }

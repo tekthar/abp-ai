@@ -14,6 +14,10 @@ All notable changes to AbpAi are written here. The format follows
   it's about in the host's words (a `record`). Unset, nothing changes: a call counts in the run's scope, about its item.
   A turn moved to the site is no longer about the run's item; an embedding keeps its own subject. Turns, live chats and
   embeddings are mapped alike.
+- **A host's words for a refusal:** `IAiAgentCalls.Refused` (a default member) turns the gateway's refusal into the
+  `AgentModelRefusedException` a run ends with, for a turn, a live chat (thrown before its first event, its `error` event
+  after) and an embedding. The default keeps the gateway's code and words; a host whose AI words refusals its own way
+  says them here, so its agents read like its other AI.
 
 ## [0.5.1] - 2026-11-13
 
