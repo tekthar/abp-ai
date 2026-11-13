@@ -6,6 +6,11 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-13
+
+An agent's graph memory through the gateway, for AbpAgent 0.4.0. No new tables or columns: a host on 0.5.0 needs no
+migration.
+
 ### Added
 
 - **An agent's graph memory:** `AiAgentEmbeddings`, AbpAgent 0.4.0's `IAgentEmbeddings` (AbpAgent.Graphiti's) on

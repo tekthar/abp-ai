@@ -7,7 +7,7 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <!-- One version for every package (see CHANGELOG.md); a VersionSuffix makes a prerelease. -->
-    <VersionPrefix>0.5.0</VersionPrefix>
+    <VersionPrefix>0.5.1</VersionPrefix>
 
     <Authors>AbpAi contributors</Authors>
     <Company>Tekthar</Company>
