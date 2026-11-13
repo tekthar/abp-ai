@@ -21,12 +21,36 @@ public sealed record AiAgentCallInfo(Guid? OnBehalfOf, string? DataClass)
 
     /// <summary>More of the provider's request (<see cref="AiRequest.ProviderOptions"/>): thinking, effort, a tool choice.</summary>
     public JsonElement? ProviderOptions { get; init; }
+
+    /// <summary>
+    /// The gateway scope the call counts in, when it isn't the run's own: AbpAgent's scope is the host's (a project, a
+    /// schema, a team), while the gateway keeps aliases, access and limits only for the scopes it knows. A host whose agent
+    /// runs somewhere the gateway keeps nothing maps it here, to the scope that holds its settings, or to the site
+    /// (<see cref="AiAgentScope.Site"/>). Unset, the call counts in the run's scope.
+    /// </summary>
+    public AiAgentScope? Scope { get; init; }
+
+    /// <summary>
+    /// What the call is about, when it isn't the run's item (<c>item</c>, its id) or an embedding's own subject: the host's
+    /// name for it, such as a <c>record</c>. Unset, a turn is about the run's item, except one moved to the site by
+    /// <see cref="Scope"/>, which no scope of the gateway's holds; an embedding keeps what its texts are about.
+    /// </summary>
+    public AiSubject? About { get; init; }
+}
+
+/// <summary>The gateway scope an agent's call counts in (<see cref="AiAgentCallInfo.Scope"/>): a scope's id, or null for the site.</summary>
+public sealed record AiAgentScope(Guid? ScopeId)
+{
+    /// <summary>The site's own models, access and limits.</summary>
+    public static readonly AiAgentScope Site = new((Guid?)null);
 }
 
 /// <summary>
 /// Tells the bridge, for an agent's call, the person the run is for (so per-person limits apply to them too) and the
-/// class of data the conversation carries (the item's, a model set's policy). The default says neither: the call
-/// counts against the agent's account alone and as the site's highest data class, so it goes only where everything may.
+/// class of data the conversation carries (the item's, a model set's policy), and, where the run's scope isn't one the
+/// gateway keeps settings for, the scope and subject the call counts as. The default says none of these: the call counts
+/// against the agent's account alone, in the run's scope, and as the site's highest data class, so it goes only where
+/// everything may.
 /// </summary>
 public interface IAiAgentCalls
 {
@@ -149,6 +173,8 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
     private async Task<AiRequest> CallAsync(AgentModelRequest request, CancellationToken cancellationToken)
     {
         AiAgentCallInfo info = await calls.DescribeAsync(request, cancellationToken);
+        // A turn moved to the site isn't about the run's item: no scope of the gateway's holds it.
+        bool toSite = info.Scope is { ScopeId: null } && request.ScopeId is not null;
         return new AiRequest(request.Alias, request.Messages)
         {
             System = request.System,
@@ -157,11 +183,11 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
             Cache = info.Cache,
             ProviderOptions = info.ProviderOptions,
             Purpose = request.Purpose,
-            ScopeId = request.ScopeId,
+            ScopeId = info.Scope is { } scope ? scope.ScopeId : request.ScopeId,
             AccountId = request.AccountId,
             OnBehalfOf = info.OnBehalfOf,
             DataClass = info.DataClass,
-            About = request.ItemId is { } item ? new AiSubject("item", item.ToString()) : null,
+            About = info.About ?? (request.ItemId is { } item && !toSite ? new AiSubject("item", item.ToString()) : null),
         };
     }
 }
@@ -181,11 +207,11 @@ public sealed class AiAgentEmbeddings(IAi ai, IAiAgentCalls calls) : IAgentEmbed
             AiEmbedding made = await ai.EmbedAsync(new AiEmbedRequest(request.Alias, request.Texts)
             {
                 AccountId = request.AccountId,
-                ScopeId = request.ScopeId,
+                ScopeId = info.Scope is { } scope ? scope.ScopeId : request.ScopeId,
                 OnBehalfOf = info.OnBehalfOf,
                 DataClass = info.DataClass,
                 Purpose = request.Purpose,
-                About = request.AboutKind is { Length: > 0 } kind && request.AboutId is { Length: > 0 } id ? new AiSubject(kind, id) : null,
+                About = info.About ?? (request.AboutKind is { Length: > 0 } kind && request.AboutId is { Length: > 0 } id ? new AiSubject(kind, id) : null),
                 Dimensions = request.Dimensions,
                 InputType = request.InputType,
             }, cancellationToken);

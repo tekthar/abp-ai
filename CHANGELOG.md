@@ -6,6 +6,15 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **An agent's scope mapped to the gateway's:** `AiAgentCallInfo.Scope` (an `AiAgentScope`, or `AiAgentScope.Site`) and
+  `AiAgentCallInfo.About`, for a host whose agents run in scopes the gateway keeps no settings for (an asset schema, a
+  team). The call counts in the scope the host names, or the site's, for aliases, access and limits; `About` names what
+  it's about in the host's words (a `record`). Unset, nothing changes: a call counts in the run's scope, about its item.
+  A turn moved to the site is no longer about the run's item; an embedding keeps its own subject. Turns, live chats and
+  embeddings are mapped alike.
+
 ## [0.5.1] - 2026-11-13
 
 An agent's graph memory through the gateway, for AbpAgent 0.4.0. No new tables or columns: a host on 0.5.0 needs no
