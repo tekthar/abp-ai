@@ -6,6 +6,12 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-13
+
+For a host whose agents run in scopes the gateway keeps no settings for, and that words its AI's refusals its own way,
+so it can take AbpAi.Agents instead of a bridge of its own. No new tables or columns: a host on 0.5.x needs no
+migration, and one that sets neither hook sees no change.
+
 ### Added
 
 - **An agent's scope mapped to the gateway's:** `AiAgentCallInfo.Scope` (an `AiAgentScope`, or `AiAgentScope.Site`) and
