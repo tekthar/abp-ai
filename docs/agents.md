@@ -22,8 +22,12 @@ Two things AbpAgent's request doesn't carry yet; give `IAiAgentCalls` to supply 
   room). The per-call limits still cap it.
 - **`ProviderOptions`**: more of the provider's request, such as `thinking`.
 
-An agent's memory embeds its texts through the same gateway (`IAi.EmbedAsync`, [embeddings.md](embeddings.md)), with
-the agent's account and a purpose of its own (`agent:{key}:memory`), so its limits count those calls too.
+An agent's graph memory (AbpAgent.Graphiti) embeds its texts through the same gateway: `AbpAiAgentsModule` registers
+`AiAgentEmbeddings` as AbpAgent's `IAgentEmbeddings`, over `IAi.EmbedAsync` ([embeddings.md](embeddings.md)), with the
+agent's account, its scope and a purpose of its own (`agent:{key}:memory:embed`), so its limits count those calls too.
+`IAiAgentCalls.DescribeEmbedAsync` says the person it's for and the class of data the texts carry (with none they count
+as the highest). Give the site an `embed` alias to an embedding model whose vectors are the size the graph is made for
+(`Agents:Graph:Dimensions`, 1024 by default).
 
 A refusal ends the run with the gateway's code (`no_model`, `over_limit`, `data_not_allowed`, `timeout`, `provider`)
 as `AgentModelRefusedException`, and so does a model that declines to answer (its `stop_reason` is `refusal`), with the

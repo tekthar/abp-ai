@@ -31,6 +31,13 @@ public sealed record AiAgentCallInfo(Guid? OnBehalfOf, string? DataClass)
 public interface IAiAgentCalls
 {
     Task<AiAgentCallInfo> DescribeAsync(AgentModelRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The same for an agent's memory being embedded (<see cref="AgentEmbedRequest"/>): the person it's for and the class
+    /// of data its texts carry. The default says neither, so the texts count as the site's highest class.
+    /// </summary>
+    Task<AiAgentCallInfo> DescribeEmbedAsync(AgentEmbedRequest request, CancellationToken cancellationToken) =>
+        Task.FromResult(new AiAgentCallInfo(null, null));
 }
 
 public sealed class NoAiAgentCallInfo : IAiAgentCalls
@@ -159,6 +166,38 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
     }
 }
 
+/// <summary>
+/// AbpAgent's embeddings on AbpAi (an agent's graph memory, AbpAgent.Graphiti): the agent's alias, account and scope, its
+/// purpose and what the texts are about, so the gateway's aliases, limits, data rules and ledger hold as for its turns.
+/// The vectors come back in order and of the size asked for; a refusal is AbpAgent's, with the gateway's code.
+/// </summary>
+public sealed class AiAgentEmbeddings(IAi ai, IAiAgentCalls calls) : IAgentEmbeddings
+{
+    public async Task<AgentEmbedding> EmbedAsync(AgentEmbedRequest request, CancellationToken cancellationToken)
+    {
+        AiAgentCallInfo info = await calls.DescribeEmbedAsync(request, cancellationToken);
+        try
+        {
+            AiEmbedding made = await ai.EmbedAsync(new AiEmbedRequest(request.Alias, request.Texts)
+            {
+                AccountId = request.AccountId,
+                ScopeId = request.ScopeId,
+                OnBehalfOf = info.OnBehalfOf,
+                DataClass = info.DataClass,
+                Purpose = request.Purpose,
+                About = request.AboutKind is { Length: > 0 } kind && request.AboutId is { Length: > 0 } id ? new AiSubject(kind, id) : null,
+                Dimensions = request.Dimensions,
+                InputType = request.InputType,
+            }, cancellationToken);
+            return new AgentEmbedding(made.Vectors, made.Model, made.Usage.InputTokens, made.Usage.Cost);
+        }
+        catch (AiRefusedException ex)
+        {
+            throw new AgentModelRefusedException(ex.Code, ex.Message);
+        }
+    }
+}
+
 /// <summary>Makes AbpAi the model behind AbpAgent: <c>[DependsOn(typeof(AbpAiAgentsModule))]</c> in the host's module.</summary>
 [DependsOn(typeof(AbpAiModule))]
 public class AbpAiAgentsModule : AbpModule
@@ -167,5 +206,6 @@ public class AbpAiAgentsModule : AbpModule
     {
         context.Services.TryAddTransient<IAiAgentCalls, NoAiAgentCallInfo>();
         context.Services.Replace(ServiceDescriptor.Transient<IAgentModels, AiAgentModels>());
+        context.Services.Replace(ServiceDescriptor.Transient<IAgentEmbeddings, AiAgentEmbeddings>());
     }
 }

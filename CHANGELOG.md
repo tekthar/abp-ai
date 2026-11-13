@@ -6,6 +6,14 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **An agent's graph memory:** `AiAgentEmbeddings`, AbpAgent 0.4.0's `IAgentEmbeddings` (AbpAgent.Graphiti's) on
+  `IAi.EmbedAsync`, registered by `AbpAiAgentsModule` beside `AiAgentModels`: the agent's alias, account and scope, its
+  purpose and what the texts are about reach the gateway, and a refusal is AbpAgent's with the gateway's code.
+  `IAiAgentCalls.DescribeEmbedAsync` (a default member) gives the person it's for and the texts' data class. AbpAi.Agents
+  takes AbpAgent 0.4.0.
+
 ## [0.5.0] - 2026-11-13
 
 What an agent's memory and live chats need: embeddings through the gateway, and AbpAgent's streamed turns. No new
