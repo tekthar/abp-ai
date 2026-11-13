@@ -30,7 +30,7 @@
   <PropertyGroup>
     <AbpVersion>10.6.1</AbpVersion>
     <!-- AbpAgent's contracts, for AbpAi.Agents. -->
-    <AbpAgentVersion>0.4.0</AbpAgentVersion>
+    <AbpAgentVersion>0.5.1</AbpAgentVersion>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
