@@ -63,6 +63,31 @@ public class AgentScopeTests
         Assert.Equal(((Guid?)null, (AiSubject?)null), (ai.Streamed!.ScopeId, ai.Streamed.About));
     }
 
+    [Fact]
+    public async Task The_runs_person_is_who_a_call_is_for_unless_the_host_says_otherwise()
+    {
+        Guid person = Guid.NewGuid(), named = Guid.NewGuid();
+        RecordingAi ai = new();
+        await new AiAgentModels(ai, new Mapping(null, null)).CompleteAsync(Turn with { StartedBy = person }, CancellationToken.None);
+        await new AiAgentEmbeddings(ai, new Mapping(null, null)).EmbedAsync(Embed with { StartedBy = person }, CancellationToken.None);
+        Assert.Equal(((Guid?)person, (Guid?)person), (ai.Turn!.OnBehalfOf, ai.Embedding!.OnBehalfOf));
+
+        // A run the system started is for no one; a host that names the person wins.
+        await new AiAgentModels(ai, new Mapping(null, null)).CompleteAsync(Turn, CancellationToken.None);
+        Assert.Null(ai.Turn!.OnBehalfOf);
+        await new AiAgentModels(ai, new ForPerson(named)).CompleteAsync(Turn with { StartedBy = person }, CancellationToken.None);
+        await new AiAgentEmbeddings(ai, new ForPerson(named)).EmbedAsync(Embed with { StartedBy = person }, CancellationToken.None);
+        Assert.Equal(((Guid?)named, (Guid?)named), (ai.Turn!.OnBehalfOf, ai.Embedding!.OnBehalfOf));
+    }
+
+    /// <summary>A host that names the person a call is for itself.</summary>
+    private sealed class ForPerson(Guid person) : IAiAgentCalls
+    {
+        public Task<AiAgentCallInfo> DescribeAsync(AgentModelRequest request, CancellationToken cancellationToken) => Task.FromResult(new AiAgentCallInfo(person, null));
+
+        public Task<AiAgentCallInfo> DescribeEmbedAsync(AgentEmbedRequest request, CancellationToken cancellationToken) => Task.FromResult(new AiAgentCallInfo(person, null));
+    }
+
     /// <summary>A host that maps every call to one scope and subject, for turns and embeddings alike.</summary>
     private sealed class Mapping(AiAgentScope? scope, AiSubject? about) : IAiAgentCalls
     {

@@ -46,7 +46,8 @@ public sealed record AiAgentScope(Guid? ScopeId)
 }
 
 /// <summary>
-/// Tells the bridge, for an agent's call, the person the run is for (so per-person limits apply to them too) and the
+/// Tells the bridge, for an agent's call, the person the run is for (so per-person limits apply to them too; by default
+/// the request's <c>StartedBy</c>, the person who started the run or kept the note) and the
 /// class of data the conversation carries (the item's, a model set's policy), and, where the run's scope isn't one the
 /// gateway keeps settings for, the scope and subject the call counts as. The default says none of these: the call counts
 /// against the agent's account alone, in the run's scope, and as the site's highest data class, so it goes only where
@@ -196,7 +197,8 @@ public sealed class AiAgentModels(IAi ai, IAiAgentCalls calls) : IAgentModels
             Purpose = request.Purpose,
             ScopeId = info.Scope is { } scope ? scope.ScopeId : request.ScopeId,
             AccountId = request.AccountId,
-            OnBehalfOf = info.OnBehalfOf,
+            // The person the run is for, unless the host says otherwise: their usage and per-person limits see the call.
+            OnBehalfOf = info.OnBehalfOf ?? request.StartedBy,
             DataClass = info.DataClass,
             About = info.About ?? (request.ItemId is { } item && !toSite ? new AiSubject("item", item.ToString()) : null),
         };
@@ -219,7 +221,7 @@ public sealed class AiAgentEmbeddings(IAi ai, IAiAgentCalls calls) : IAgentEmbed
             {
                 AccountId = request.AccountId,
                 ScopeId = info.Scope is { } scope ? scope.ScopeId : request.ScopeId,
-                OnBehalfOf = info.OnBehalfOf,
+                OnBehalfOf = info.OnBehalfOf ?? request.StartedBy,
                 DataClass = info.DataClass,
                 Purpose = request.Purpose,
                 About = info.About ?? (request.AboutKind is { Length: > 0 } kind && request.AboutId is { Length: > 0 } id ? new AiSubject(kind, id) : null),

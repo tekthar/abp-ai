@@ -18,6 +18,13 @@ All notable changes to AbpAi are written here. The format follows
   explorer (`OpenApiGroupName` for a document of their own) and aren't application services, so AbpMcp leaves them be.
 - The sample host serves the package's API instead of its own controller, which keeps only its `ask`.
 
+### Changed
+
+- **An agent's call is for the run's person:** AbpAi.Agents takes AbpAgent 0.5.4's `StartedBy` (on `AgentModelRequest`
+  and `AgentEmbedRequest`) as the call's `OnBehalfOf` when the host's `IAiAgentCalls` names no one, so the person who
+  started a run (or whose run kept a note) sees its calls in their own usage and is held to their per-person limits.
+  A run the system started is for no one; a host that names someone still wins. AbpAi.Agents needs AbpAgent 0.5.4.
+
 ## [0.6.0] - 2026-11-13
 
 For a host whose agents run in scopes the gateway keeps no settings for, and that words its AI's refusals its own way,
