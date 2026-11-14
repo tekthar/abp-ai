@@ -1,8 +1,10 @@
+using Microsoft.EntityFrameworkCore;
+
 namespace AbpAi.Host.Tests;
 
 /// <summary>
-/// 0.8.0's: what the shared settings screens found missing. People named in usage as the host names them, and a scope's
-/// own view for its admins.
+/// 0.8.0's: what the shared settings screens found missing. People named in usage as the host names them, a scope's
+/// own view for its admins, and a call to try from a settings page.
 /// </summary>
 public sealed partial class GatewayHostTests
 {
@@ -82,6 +84,32 @@ public sealed partial class GatewayHostTests
         Assert.Equal(2, (await admin.GetScopeViewAsync(SiteAdmin, Budget, default)).Models.Count);
         await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.GetScopeViewAsync(SalesAdmin, Budget, default));
         await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.GetScopeViewAsync(new AiActor(Ben), Budget, default));
+    }
+
+    [Fact]
+    public async Task A_try_is_a_call_as_the_admin_checked_like_any_and_kept_in_usage_under_its_purpose()
+    {
+        AiAdminService admin = Get<AiAdminService>();
+        AiTryReply reply = await admin.TryAsync(FinanceAdmin, new AiTryInput("smart", "Totals by region, please.", Budget, AiDataClasses.Aggregates), default);
+        Assert.Equal(("public-cloud", "cloud-large"), (reply.Connection, reply.Model));
+        Assert.False(string.IsNullOrEmpty(reply.Text));
+        AiUsageRecord record = await Db(db => db.AiUsage.SingleAsync());
+        Assert.Equal((AiAdminService.TryPurpose, (Guid?)FinanceAdmin.Id, (Guid?)Budget, AiUsageStates.Done), (record.Purpose, record.AccountId, record.ScopeId, record.State));
+
+        // The data rules hold: rows go only where rows may go, and a try that says nothing counts as the highest.
+        Assert.Equal("on-prem", (await admin.TryAsync(FinanceAdmin, new AiTryInput("smart", "Rows", Budget, AiDataClasses.Rows), default)).Connection);
+        Assert.Equal(AiRefusalCodes.DataNotAllowed, (await Assert.ThrowsAsync<AiRefusedException>(() =>
+            admin.TryAsync(FinanceAdmin, new AiTryInput("public", "Rows", Budget), default))).Code);
+
+        // So do the limits, the admin's own per-person ones too.
+        await admin.SetLimitAsync(FinanceAdmin, Finance, new AiLimitInput(AiLimitKinds.Person, AiPeriods.Day, 2) { Measure = AiLimitMeasures.Requests }, default);
+        AiRefusedException over = await Assert.ThrowsAsync<AiRefusedException>(() => admin.TryAsync(FinanceAdmin, new AiTryInput("smart", "Again", Budget), default));
+        Assert.Equal((AiRefusalCodes.OverLimit, AiLimitKinds.Person, (Guid?)FinanceAdmin.Id), (over.Code, over.Limit!.Kind, over.Limit.AccountId));
+
+        // Only those who administer the scope: not Sales' admin, and not on the site for Finance's.
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.TryAsync(SalesAdmin, new AiTryInput("smart", "Hi", Budget), default));
+        await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() => admin.TryAsync(FinanceAdmin, new AiTryInput("smart", "Hi"), default));
+        Assert.Equal("public-cloud", (await admin.TryAsync(SiteAdmin, new AiTryInput("smart", "Hi", null, AiDataClasses.Public), default)).Connection);
     }
 
     /// <summary>The host's accounts, telling each time names are asked.</summary>

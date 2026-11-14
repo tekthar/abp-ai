@@ -156,6 +156,39 @@ public sealed class AdminApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_try_answers_what_the_model_said_and_a_refusal_answers_422_with_its_code_and_limit()
+    {
+        HttpClient site = As(SiteAdmin);
+        HttpResponseMessage made = await site.PostAsJsonAsync($"{Prefix}/connections", new AiConnectionInput("cloud", "demo", ["cloud-large"], [AiDataClasses.Public]));
+        Guid connection = (await made.Content.ReadFromJsonAsync<AiConnectionInfo>())!.Id;
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/aliases/fast", new[] { new AiAliasTarget(connection) })).StatusCode);
+
+        // Finance's admin tries the site's alias in a project of theirs; it isn't a sensitive action.
+        HttpClient finance = As(FinanceAdmin);
+        HttpResponseMessage tried = await finance.PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "Say hello.", Budget, AiDataClasses.Public));
+        Assert.Equal(HttpStatusCode.OK, tried.StatusCode);
+        Assert.False(tried.Headers.Contains(SensitiveMark.Header));
+        JsonElement reply = await tried.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(("cloud-large", "cloud"), (reply.GetProperty("model").GetString(), reply.GetProperty("connection").GetString()));
+        Assert.False(string.IsNullOrEmpty(reply.GetProperty("text").GetString()));
+        Assert.True(reply.GetProperty("usage").GetProperty("outputTokens").GetInt32() > 0);
+
+        // Data the alias's model may not take, and a limit reached: 422, the gateway's code, and the limit.
+        HttpResponseMessage rows = await finance.PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "Rows", Budget, AiDataClasses.Rows));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rows.StatusCode);
+        Assert.Equal(AiRefusalCodes.DataNotAllowed, (await rows.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        await site.PostAsJsonAsync($"{Prefix}/limits?scopeId={Finance}", new AiLimitInput(AiLimitKinds.Total, AiPeriods.Day, 1) { Measure = AiLimitMeasures.Requests });
+        HttpResponseMessage over = await finance.PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "Again", Budget, AiDataClasses.Public));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, over.StatusCode);
+        JsonElement refusal = await over.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal((AiRefusalCodes.OverLimit, Finance), (refusal.GetProperty("code").GetString(), refusal.GetProperty("limit").GetProperty("scopeId").GetGuid()));
+
+        // Only those who administer the scope; nothing to say is the services' 400.
+        Assert.Equal(HttpStatusCode.Forbidden, (await As(Ben).PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "Hi", Budget))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await finance.PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "", Budget))).StatusCode);
+    }
+
+    [Fact]
     public void The_api_is_in_its_own_openapi_group()
     {
         IReadOnlyList<ApiDescriptionGroup> groups = _factory!.Services.GetRequiredService<IApiDescriptionGroupCollectionProvider>().ApiDescriptionGroups.Items;

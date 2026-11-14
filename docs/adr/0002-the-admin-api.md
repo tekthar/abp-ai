@@ -75,6 +75,10 @@ What the shared screens (`@abpjs/ui`'s AI area) found missing on 0.7.0, all addi
 - `AiSiteSettings.ConnectionsKeptByHost` (read only): the host keeps the connections, so a screen shows them read-only.
 - `GET scopes/{scopeId}/view`, for the scope's admins: a scope's settings page names the site's models open to it and the
   aliases and limits it gets from above, which its admins can't list (the site's connections are for the site's admins).
+- `POST try`, for the scope's admins (the site's with no scope): one call through `IAi` as the caller, purpose `try`,
+  checked like any call. A refusal answers 422 as `resolve` does, with the limit too. Not `[AiSensitive]`: it changes no
+  setting and hands out no one else's data, as a connection's test doesn't.
+- `IAiAccounts.NamesOfAsync`, a default member: people's and accounts' names, as usage's titles and on recent calls.
 
 ## Steps
 

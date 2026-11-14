@@ -149,6 +149,13 @@ public sealed record AiLimitInfo(Guid Id, Guid? ScopeId, string Kind, string Per
     public string Measure { get; init; } = AiLimitMeasures.Cost;
 }
 
+/// <summary>A call to try from a settings screen: a prompt to an alias (or a model by its name), in a scope (null: the site), with the class of data it carries.</summary>
+/// <param name="DataClass">The prompt's highest class; null counts as the site's highest, as for any call.</param>
+public sealed record AiTryInput(string Alias, string Prompt, Guid? ScopeId = null, string? DataClass = null);
+
+/// <summary>What a tried call answered: its text, the model (the provider's id) and connection that answered, and what it took.</summary>
+public sealed record AiTryReply(string Text, string Model, string Connection, AiUsage Usage);
+
 /// <summary>
 /// The admin API: the site's settings, and connections, aliases and limits on the site or a scope. The site's admins
 /// set anything; a scope's admins set their scope's and those of the scopes under it, connections only while the site
@@ -157,10 +164,13 @@ public sealed record AiLimitInfo(Guid Id, Guid? ScopeId, string Kind, string Per
 /// them: creating, changing or deleting one here is refused with <see cref="AiErrorCodes.HostConnections"/>.
 /// </summary>
 public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains chains, AiDataRules rules, IEnumerable<IAiProvider> providers,
-    IStringEncryptionService encryption, IAiConnectionSource source, IOptions<AiOptions> options) : ITransientDependency
+    IStringEncryptionService encryption, IAiConnectionSource source, IOptions<AiOptions> options, IAi ai) : ITransientDependency
 {
     /// <summary>The classes a scope's connections may list when the site hasn't said: nothing of the organization's data.</summary>
     public static readonly IReadOnlyList<string> DefaultScopeDataClasses = [AiDataClasses.Public, AiDataClasses.Internal];
+
+    /// <summary>The purpose a tried call is kept under in usage (<see cref="TryAsync"/>).</summary>
+    public const string TryPurpose = "try";
 
     public async Task<AiSiteSettings> GetSiteAsync(AiActor actor, CancellationToken ct)
     {
@@ -656,6 +666,32 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }
 
         await aiDb.RunAsync(db => db.AiLimits.Where(l => l.Id == id).ExecuteDeleteAsync(ct), cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Tries an alias from a settings screen: one call through the gateway (<see cref="IAi"/>) as the actor, kept in usage
+    /// under <see cref="TryPurpose"/>, and checked like any call: the scope's access, the limits (the actor's own too) and
+    /// the data rules. For those who administer the scope, or the site's admins when no scope is named.
+    /// </summary>
+    /// <exception cref="AiRefusedException">The gateway refused it (no model, a limit, the data rules) or the provider failed.</exception>
+    public async Task<AiTryReply> TryAsync(AiActor actor, AiTryInput input, CancellationToken ct)
+    {
+        if (!await AdministersAsync(actor, input.ScopeId, ct))
+        {
+            throw new UserFriendlyException(input.ScopeId is null ? "Only the site's AI admins try its models." : "Only this scope's AI admins try its models.",
+                AiErrorCodes.Forbidden);
+        }
+
+        if (string.IsNullOrWhiteSpace(input.Alias) || string.IsNullOrWhiteSpace(input.Prompt))
+        {
+            throw new UserFriendlyException("A try names an alias (or a model) and has a prompt.", AiErrorCodes.Invalid);
+        }
+
+        AiReply reply = await ai.CompleteAsync(new AiRequest(input.Alias.Trim(), AiMessages.User(input.Prompt))
+        {
+            ScopeId = input.ScopeId, AccountId = actor.Id, DataClass = input.DataClass, Purpose = TryPurpose,
+        }, ct);
+        return new AiTryReply(reply.Text, reply.Model, reply.Connection, reply.Usage);
     }
 
     /// <summary>The actor administers the site, or the scope or one above it.</summary>

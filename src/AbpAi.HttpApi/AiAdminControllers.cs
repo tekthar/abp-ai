@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.Mvc;
@@ -126,6 +127,34 @@ public class AiScopesController(AiAdminService admin, IAiCurrentActor actor) : A
     /// </summary>
     [HttpGet("{scopeId:guid}/view")]
     public async Task<AiScopeView> View(Guid scopeId, CancellationToken ct) => await admin.GetScopeViewAsync(await actor.GetAsync(ct), scopeId, ct);
+}
+
+/// <summary>The gateway's refusal as the API answers it (422): its code (<see cref="AiRefusalCodes"/>), its words, and for a limit, which and when it frees.</summary>
+public sealed record AiRefusalAnswer(string Code, string Message, AiLimitRef? Limit = null);
+
+/// <summary>
+/// One call to try an alias from a settings screen, as the caller, for those who administer the scope (or the site):
+/// checked like any call and kept in usage (purpose <c>try</c>). A refusal (no model, a limit, the data rules, the
+/// provider) answers 422 with the gateway's code and, for a limit, which and when it frees.
+/// </summary>
+[Route("try")]
+public class AiTryController(AiAdminService admin, IAiCurrentActor actor) : AbpControllerBase
+{
+    [HttpPost]
+    [ProducesResponseType<AiTryReply>(StatusCodes.Status200OK)]
+    [ProducesResponseType<AiRefusalAnswer>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<AiTryReply>> Try([FromBody] AiTryInput input, CancellationToken ct)
+    {
+        AiActor caller = await actor.GetAsync(ct);
+        try
+        {
+            return await admin.TryAsync(caller, input, ct);
+        }
+        catch (AiRefusedException ex)
+        {
+            return UnprocessableEntity(new AiRefusalAnswer(ex.Code, ex.Message, ex.Limit));
+        }
+    }
 }
 
 /// <summary>

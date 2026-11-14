@@ -105,10 +105,72 @@ public class ScreenTests
 
     private static AiAlias Alias(Guid? scope, string name) => new(Guid.NewGuid(), scope, name) { Targets = [new AiAliasTarget(Guid.NewGuid())] };
 
+    [Fact]
+    public async Task A_try_is_a_call_as_the_admin_with_its_own_purpose_for_those_who_administer_the_scope()
+    {
+        Guid scope = Guid.NewGuid();
+        RecordingAi ai = new();
+        AiAdminService admin = Admin(new HostConnections(), new ScopeAdmin(Ben, scope), ai);
+
+        AiTryReply reply = await admin.TryAsync(new AiActor(Ben), new AiTryInput(" smart ", "Say hello.", scope, AiDataClasses.Internal), default);
+        Assert.Equal(("ok", "demo-model", "cloud", 4), (reply.Text, reply.Model, reply.Connection, reply.Usage.OutputTokens));
+        AiRequest sent = Assert.Single(ai.Sent);
+        Assert.Equal(("smart", (Guid?)scope, (Guid?)Ben, (Guid?)null, AiDataClasses.Internal, AiAdminService.TryPurpose),
+            (sent.Alias, sent.ScopeId, sent.AccountId, sent.OnBehalfOf, sent.DataClass, sent.Purpose));
+        Assert.Equal("Say hello.", AiMessages.LastUserText(sent.Messages));
+
+        // Someone who doesn't administer it, or the site, may not; a try with nothing to say is refused before it's made.
+        Assert.Equal(AiErrorCodes.Forbidden, (await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() =>
+            admin.TryAsync(new AiActor(Guid.NewGuid()), new AiTryInput("smart", "Hi", scope), default))).Code);
+        Assert.Equal(AiErrorCodes.Forbidden, (await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() =>
+            admin.TryAsync(new AiActor(Ben), new AiTryInput("smart", "Hi"), default))).Code);
+        Assert.Equal(AiErrorCodes.Invalid, (await Assert.ThrowsAsync<Volo.Abp.UserFriendlyException>(() =>
+            admin.TryAsync(new AiActor(Ben), new AiTryInput("smart", " ", scope), default))).Code);
+
+        // The gateway's refusal is the caller's to answer.
+        ai.Refuse = new AiRefusedException(AiRefusalCodes.DataNotAllowed, "No model may take it.");
+        Assert.Equal(AiRefusalCodes.DataNotAllowed, (await Assert.ThrowsAsync<AiRefusedException>(() =>
+            admin.TryAsync(new AiActor(Ben), new AiTryInput("smart", "Hi", scope), default))).Code);
+        Assert.Single(ai.Sent);
+    }
+
     /// <summary>The admin service with what its database-free parts need; the rest is left out.</summary>
-    private static AiAdminService Admin(IAiConnectionSource source) =>
-        new(null!, new NoAiRights(), new AiScopeChains(new FlatAiScopes(), Options.Create(new AiOptions())), new AiDataRules(Options.Create(new AiOptions())), [],
-            null!, source, Options.Create(new AiOptions()));
+    private static AiAdminService Admin(IAiConnectionSource source, IAiRights? rights = null, IAi? ai = null) =>
+        new(null!, rights ?? new NoAiRights(), new AiScopeChains(new FlatAiScopes(), Options.Create(new AiOptions())), new AiDataRules(Options.Create(new AiOptions())),
+            [], null!, source, Options.Create(new AiOptions()), ai!);
+
+    /// <summary>One person administers one scope.</summary>
+    private sealed class ScopeAdmin(Guid person, Guid scope) : IAiRights
+    {
+        public Task<bool> IsSiteAdminAsync(AiActor actor, CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public Task<bool> AdministersScopeAsync(AiActor actor, Guid scopeId, CancellationToken cancellationToken) =>
+            Task.FromResult(actor.Id == person && scopeId == scope);
+    }
+
+    /// <summary>A gateway that keeps each call and answers it, or refuses it when told to.</summary>
+    private sealed class RecordingAi : IAi
+    {
+        public List<AiRequest> Sent { get; } = [];
+
+        public AiRefusedException? Refuse { get; set; }
+
+        public Task<AiReply> CompleteAsync(AiRequest request, CancellationToken cancellationToken = default)
+        {
+            if (Refuse is not null)
+            {
+                throw Refuse;
+            }
+
+            Sent.Add(request);
+            return Task.FromResult(new AiReply(AiMessages.AssistantText("ok"), "demo-model", new AiUsage(3, 4, 0.5m)) { Connection = "cloud" });
+        }
+
+        public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<AiChoice> ResolveAsync(string alias, Guid? scopeId = null, string? dataClass = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
 
     private static AiUsageRecord Call(Guid? account, Guid? onBehalfOf) =>
         new(Guid.NewGuid(), DateTime.UtcNow, null, [], account, onBehalfOf, "ask", "smart", Guid.NewGuid(), "cloud", "demo", "cloud-large", "internal", 0m, false);

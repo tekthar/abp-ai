@@ -20,6 +20,16 @@ All notable changes to AbpAi are written here. The format follows
   (`AiScopeModel`: connection, model, its settings as the router reads them, price, where its connection is set, and
   `Own`), the aliases it gets from above that it doesn't replace and the limits set above it (each with where it's set),
   `MayConnect` and `ConnectionsKeptByHost`. By the router's own rules, which now live in one place for both.
+- **Try a call:** `AiAdminService.TryAsync` and `POST {prefix}/try` (`AiTryInput`: alias, prompt, scope, data class),
+  for whoever administers the scope (or the site, with no scope): one call through `IAi` as the actor, purpose `try`,
+  checked like any call (access, limits, data rules) and kept in usage. It answers `AiTryReply` (text, model,
+  connection, usage); a refusal answers 422 with `AiRefusalAnswer` (code, message, limit). Not `[AiSensitive]`, as a
+  connection's test isn't.
+
+### Changed
+
+- `AiUsageService` takes `IAiAccounts` and `AiAdminService` takes `IAi`, from the container as before; a host that
+  constructs either itself passes them.
 
 ## [0.7.0] - 2026-11-14
 

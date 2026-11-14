@@ -214,7 +214,9 @@ own gets the whole call as `AiProviderCall.Request`.
 The admin and usage services are the API: `AiAdminService` (site settings, connections, models, scopes' access,
 aliases, limits), `AiUsageService` (queries, a person's own, recent calls, CSV) and `AiExportService` (exports of calls
 for support). Their refusals are `UserFriendlyException`s with `AiErrorCodes.Forbidden` (403), `Invalid` (400) or
-`HostConnections` (409).
+`HostConnections` (409). `AiAdminService.TryAsync(actor, input)` makes one call for a settings page to try an alias: through
+`IAi`, as the actor, with purpose `try`, checked like any call (access, limits, data rules) and kept in usage; a
+refusal is the gateway's `AiRefusedException`.
 
 `AbpAi.HttpApi` serves them over HTTP ([ADR 0002](adr/0002-the-admin-api.md)): depend on `AbpAiHttpApiModule`.
 
@@ -228,6 +230,7 @@ for support). Their refusals are `UserFriendlyException`s with `AiErrorCodes.For
 | `GET scopes/access`, `GET`, `PUT`, `DELETE scopes/{id}/access` | Which site models a scope may use |
 | `GET scopes/{id}/view` | A scope's own view, for its admins: the models it may use now, the aliases it gets from above, the limits set above it |
 | `GET resolve/{alias}` | Where an alias leads now (`?scopeId=&dataClass=`), for its admins; 422 with the gateway's code when nothing may take it |
+| `POST try` | One call to try an alias (`{ alias, prompt, scopeId?, dataClass? }`), as the caller, for the scope's admins (the site's with no scope): `{ text, model, connection, usage }`, or 422 with the gateway's code and the limit |
 | `POST usage`, `GET usage/mine`, `POST usage/recent`, `GET usage/mine/recent`, `POST usage/csv` | Usage |
 | `GET`, `POST exports`, `POST exports/{id}/file`, `DELETE exports/{id}` | Exports of calls, for the site's owner |
 

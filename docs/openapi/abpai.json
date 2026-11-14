@@ -1004,6 +1004,75 @@
         }
       }
     },
+    "/api/ai/try": {
+      "post": {
+        "tags": [
+          "AiTry"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiTryInput"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiTryInput"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/AiTryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiTryReply"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiTryReply"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiTryReply"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiRefusalAnswer"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiRefusalAnswer"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiRefusalAnswer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ai/resolve/{alias}": {
       "get": {
         "tags": [
@@ -2201,6 +2270,68 @@
           }
         }
       },
+      "AiLimitRef": {
+        "required": [
+          "limitId",
+          "kind",
+          "scopeId",
+          "accountId",
+          "period",
+          "amount",
+          "spent",
+          "freesAt"
+        ],
+        "type": "object",
+        "properties": {
+          "limitId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "scopeId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "accountId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "period": {
+            "type": "string"
+          },
+          "amount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "spent": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "freesAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "measure": {
+            "type": "string"
+          }
+        }
+      },
       "AiModelRef": {
         "required": [
           "connectionId",
@@ -2344,6 +2475,31 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "AiRefusalAnswer": {
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "limit": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiLimitRef"
+              }
+            ]
           }
         }
       },
@@ -2535,6 +2691,107 @@
           }
         }
       },
+      "AiTryInput": {
+        "required": [
+          "alias",
+          "prompt"
+        ],
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "scopeId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "dataClass": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "AiTryReply": {
+        "required": [
+          "text",
+          "model",
+          "connection",
+          "usage"
+        ],
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "connection": {
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/AiUsage"
+          }
+        }
+      },
+      "AiUsage": {
+        "required": [
+          "inputTokens",
+          "outputTokens",
+          "cost"
+        ],
+        "type": "object",
+        "properties": {
+          "inputTokens": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "outputTokens": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "cost": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "cacheWriteTokens": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "cacheReadTokens": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "AiUsageQuery": {
         "required": [
           "from",
@@ -2719,6 +2976,9 @@
     },
     {
       "name": "AiScopes"
+    },
+    {
+      "name": "AiTry"
     },
     {
       "name": "AiResolve"
