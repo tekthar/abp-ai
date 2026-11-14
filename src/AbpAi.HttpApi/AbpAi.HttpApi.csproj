@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>AbpAi.AspNetCore: the model gateway's admin API over HTTP, under a route prefix the host sets. Site settings, connections (test, provider models, discovery), aliases, limits per scope and per account, which site models a scope may use, usage (queries, a person's own, recent calls, CSV) and exports of calls, over AbpAi's services and the host's rights. The host says who the actor is and what an action needing the password again means.</Description>
+    <Description>AbpAi.HttpApi: the model gateway's admin API over HTTP, under a route prefix the host sets. Site settings, connections (test, provider models, discovery), aliases, limits per scope and per account, which site models a scope may use, usage (queries, a person's own, recent calls, CSV) and exports of calls, over AbpAi's services and the host's rights. The host says who the actor is and what an action needing the password again means.</Description>
     <PackageTags>ai;llm;gateway;admin;api;aspnetcore;abp</PackageTags>
   </PropertyGroup>
 

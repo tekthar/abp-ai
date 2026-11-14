@@ -209,7 +209,7 @@ aliases, limits), `AiUsageService` (queries, a person's own, recent calls, CSV) 
 for support). Their refusals are `UserFriendlyException`s with `AiErrorCodes.Forbidden` (403), `Invalid` (400) or
 `HostConnections` (409).
 
-`AbpAi.AspNetCore` serves them over HTTP ([ADR 0002](adr/0002-the-admin-api.md)): depend on `AbpAiAspNetCoreModule`.
+`AbpAi.HttpApi` serves them over HTTP ([ADR 0002](adr/0002-the-admin-api.md)): depend on `AbpAiHttpApiModule`.
 
 | Route (under `AiHttpOptions.RoutePrefix`, `api/ai` by default) | What |
 |---|---|

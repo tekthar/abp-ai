@@ -1,4 +1,4 @@
-using AbpAi.AspNetCore;
+using AbpAi.HttpApi;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Volo.Abp;
@@ -15,7 +15,7 @@ namespace AbpAi.SampleHost;
 /// The gateway's module and ABP's: all a host needs. The sample's context holds the gateway's tables; it gives its
 /// scopes (departments over projects), its admins and its groups, and keeps the defaults for the rest.
 /// </summary>
-[DependsOn(typeof(AbpAutofacModule), typeof(AbpAspNetCoreMvcModule), typeof(AbpAiModule), typeof(AbpAiAspNetCoreModule))]
+[DependsOn(typeof(AbpAutofacModule), typeof(AbpAspNetCoreMvcModule), typeof(AbpAiModule), typeof(AbpAiHttpApiModule))]
 public class SampleHostModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
@@ -25,7 +25,7 @@ public class SampleHostModule : AbpModule
         context.Services.Replace(ServiceDescriptor.Singleton<IAiScopes>(sp => sp.GetRequiredService<SampleOrg>()));
         context.Services.Replace(ServiceDescriptor.Singleton<IAiRights>(sp => sp.GetRequiredService<SampleOrg>()));
         context.Services.Replace(ServiceDescriptor.Singleton<IAiAccounts>(sp => sp.GetRequiredService<SampleOrg>()));
-        // Who's acting is the X-Account header: the sample has no sign-in, a real host has its own. AbpAi.AspNetCore's admin
+        // Who's acting is the X-Account header: the sample has no sign-in, a real host has its own. AbpAi.HttpApi's admin
         // API then takes the signed-in user as its actor, and maps the gateway's codes to their statuses itself.
         context.Services.AddAuthentication(XAccount.Name).AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, XAccount>(XAccount.Name, null);
         context.Services.AddAuthorization();

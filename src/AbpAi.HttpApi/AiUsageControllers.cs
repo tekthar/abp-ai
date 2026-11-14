@@ -2,7 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Mvc;
 
-namespace AbpAi.AspNetCore;
+namespace AbpAi.HttpApi;
 
 /// <summary>A period's calls for a recent-calls list: the query, how many (up to <see cref="AiUsageService.MaxRecent"/>), and which states (done, refused, failed).</summary>
 public sealed record AiRecentQuery(DateTime From, DateTime To, Guid? ScopeId = null, int Count = 50, IReadOnlyList<string>? States = null);

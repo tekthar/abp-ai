@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using AbpAi.AspNetCore;
+using AbpAi.HttpApi;
 using AbpAi.SampleHost;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -12,7 +12,7 @@ using Npgsql;
 namespace AbpAi.Host.Tests;
 
 /// <summary>
-/// AbpAi.AspNetCore's admin API on the sample (ADR 0002), served under a prefix of the host's, with a mark of the host's
+/// AbpAi.HttpApi's admin API on the sample (ADR 0002), served under a prefix of the host's, with a mark of the host's
 /// on the sensitive actions and a document of its own: the routes, who may call them, the services' refusals as their
 /// statuses, and connections, aliases, limits and where an alias leads, over HTTP. Needs Postgres, as the other host tests.
 /// </summary>

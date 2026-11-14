@@ -12,17 +12,17 @@ using Volo.Abp.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Mvc.ExceptionHandling;
 using Volo.Abp.Modularity;
 
-namespace AbpAi.AspNetCore;
+namespace AbpAi.HttpApi;
 
 /// <summary>
-/// AbpAi's admin API over HTTP: <c>[DependsOn(typeof(AbpAiAspNetCoreModule))]</c> in the host's module, and
+/// AbpAi's admin API over HTTP: <c>[DependsOn(typeof(AbpAiHttpApiModule))]</c> in the host's module, and
 /// <see cref="AiHttpOptions"/> for the routes' prefix, the policy and what a sensitive action needs.
 /// </summary>
 [DependsOn(typeof(AbpAiModule), typeof(AbpAspNetCoreMvcModule))]
-public class AbpAiAspNetCoreModule : AbpModule
+public class AbpAiHttpApiModule : AbpModule
 {
     public override void PreConfigureServices(ServiceConfigurationContext context) =>
-        PreConfigure<IMvcBuilder>(mvc => mvc.AddApplicationPartIfNotExists(typeof(AbpAiAspNetCoreModule).Assembly));
+        PreConfigure<IMvcBuilder>(mvc => mvc.AddApplicationPartIfNotExists(typeof(AbpAiHttpApiModule).Assembly));
 
     public override void ConfigureServices(ServiceConfigurationContext context)
     {

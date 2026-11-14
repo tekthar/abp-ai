@@ -1,7 +1,7 @@
 using Volo.Abp.Authorization;
 using Volo.Abp.Users;
 
-namespace AbpAi.AspNetCore;
+namespace AbpAi.HttpApi;
 
 /// <summary>
 /// Who calls the admin API, as AbpAi's services and the host's <see cref="IAiRights"/> take them. The default is the

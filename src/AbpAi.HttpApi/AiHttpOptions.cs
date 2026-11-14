@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
 
-namespace AbpAi.AspNetCore;
+namespace AbpAi.HttpApi;
 
-/// <summary>How the host serves AbpAi's admin API (<see cref="AbpAiAspNetCoreModule"/>).</summary>
+/// <summary>How the host serves AbpAi's admin API (<see cref="AbpAiHttpApiModule"/>).</summary>
 public sealed class AiHttpOptions
 {
     /// <summary>The routes' prefix, the whole path before them: <c>api/ai</c> by default, <c>api/ask/ai</c> or <c>api/platform/ai</c> for a product that keeps its own.</summary>

@@ -10,7 +10,7 @@ public sealed record AskInput(string Alias, string Prompt, string? Scope = null,
 public sealed record AskOutput(string Text, string Model, string Connection, AiUsage Usage);
 
 /// <summary>
-/// The sample's own call over the gateway; its admin API, usage and exports are AbpAi.AspNetCore's, under the same
+/// The sample's own call over the gateway; its admin API, usage and exports are AbpAi.HttpApi's, under the same
 /// <c>api/ai</c>. Who's acting is the X-Account header (<see cref="XAccount"/>). A refusal is 422 with its code and, for a
 /// limit, which and when it frees.
 /// </summary>

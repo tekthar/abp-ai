@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.Mvc;
 
-namespace AbpAi.AspNetCore;
+namespace AbpAi.HttpApi;
 
 /// <summary>The site's AI settings: whether scopes may connect, prompts kept and for how long, the data classes.</summary>
 [Route("site")]

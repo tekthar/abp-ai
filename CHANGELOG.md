@@ -8,8 +8,8 @@ All notable changes to AbpAi are written here. The format follows
 
 ### Added
 
-- **AbpAi.AspNetCore**, a new package: the admin API over HTTP ([ADR 0002](docs/adr/0002-the-admin-api.md)). Depend on
-  `AbpAiAspNetCoreModule` and the services are served under `AiHttpOptions.RoutePrefix` (`api/ai` by default): site
+- **AbpAi.HttpApi**, a new package: the admin API over HTTP ([ADR 0002](docs/adr/0002-the-admin-api.md)). Depend on
+  `AbpAiHttpApiModule` and the services are served under `AiHttpOptions.RoutePrefix` (`api/ai` by default): site
   settings, connections (test, provider models, discovery), aliases, limits per scope and per account, scopes' access,
   where an alias leads, usage (a query, a person's own, recent calls, CSV) and exports of calls. Every action wants a
   signed-in caller (or `Policy`); the actor is `IAiCurrentActor`'s (the user's id by default); actions that change

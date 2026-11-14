@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AbpAi.AspNetCore\AbpAi.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\AbpAi.HttpApi\AbpAi.HttpApi.csproj" />
     <PackageReference Include="Volo.Abp.Autofac" Version="$(AbpVersion)" />
     <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="$(AbpVersion)" />
     <!-- For its migrations (dotnet ef migrations add), as a host has for its own. -->
