@@ -29,6 +29,10 @@ public class SampleHostModule : AbpModule
         // API then takes the signed-in user as its actor, and maps the gateway's codes to their statuses itself.
         context.Services.AddAuthentication(XAccount.Name).AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, XAccount>(XAccount.Name, null);
         context.Services.AddAuthorization();
+        // The admin API's own document, as a host gives it its group: /openapi/abpai.json, kept in docs/openapi/abpai.json
+        // (OpenApiContractTests), and what a host's screens generate their types from.
+        Configure<AiHttpOptions>(options => options.OpenApiGroupName = OpenApiDocument.Name);
+        context.Services.AddOpenApi(OpenApiDocument.Name, OpenApiDocument.Configure);
     }
 
     public override void OnApplicationInitialization(ApplicationInitializationContext context)
@@ -37,7 +41,27 @@ public class SampleHostModule : AbpModule
         app.UseRouting();
         app.UseAuthentication();
         app.UseAuthorization();
-        app.UseConfiguredEndpoints();
+        app.UseConfiguredEndpoints(endpoints => endpoints.MapOpenApi());
+    }
+}
+
+/// <summary>The admin API's OpenAPI document: AbpAi.HttpApi's actions alone, under the default prefix, with no servers.</summary>
+public static class OpenApiDocument
+{
+    public const string Name = "abpai";
+
+    public static void Configure(Microsoft.AspNetCore.OpenApi.OpenApiOptions options)
+    {
+        options.ShouldInclude = description => description.GroupName == Name;
+        options.AddDocumentTransformer((document, _, _) =>
+        {
+            document.Servers?.Clear(); // the kept copy doesn't depend on where it was made
+            document.Info.Title = "AbpAi admin API";
+            document.Info.Version = AbpAiModule.Version;
+            document.Info.Description = "AbpAi.HttpApi's actions under the default prefix (api/ai); a host serves them under its own. "
+                + "Errors are ABP's: { \"error\": { \"code\", \"message\", \"details\", \"validationErrors\" } }.";
+            return Task.CompletedTask;
+        });
     }
 }
 
