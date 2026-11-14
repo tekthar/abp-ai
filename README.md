@@ -52,6 +52,8 @@ AbpAgent.
 | `AbpAi.Agents` | AbpAgent's `IAgentModels` on top of `IAi`, so neither package needs the other | Both (not on nuget.org until AbpAgent's contracts are) |
 | `AbpAi.HttpApi` | The admin API over HTTP: site settings, connections, aliases, limits, scopes' access, usage, exports, under a prefix the host sets | `AbpAi`, ABP's MVC |
 
+Coming from ABP's module template? [Where ABP's layers are in this repository](docs/abp-layers.md).
+
 ## Getting started
 
 ```csharp
