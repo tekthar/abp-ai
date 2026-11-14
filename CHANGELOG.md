@@ -4,7 +4,7 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
-## [Unreleased]
+## [0.7.0] - 2026-11-14
 
 ### Added
 
