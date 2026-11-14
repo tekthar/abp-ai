@@ -1612,6 +1612,18 @@
               "string"
             ],
             "format": "int32"
+          },
+          "accountName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "onBehalfOfName": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

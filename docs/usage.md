@@ -22,6 +22,11 @@ a department's admin sees their month by project and by purpose, and is refused 
 Each row counts the calls that answered (`Calls`), with their tokens and cost, and apart from them those that failed
 (`Failed`) and were refused (`Refused`), which cost nothing.
 
+A row's `Title` is the host's name for what it groups: a scope's from `IAiScopes.GetManyAsync`, a person's or an
+account's from `IAiAccounts.NamesOfAsync`; a call (`AiCallRow`) has its account's name and the name of the person it
+was for (`AccountName`, `OnBehalfOfName`). The host is asked once for a query's names, not once a row; one that names
+no one leaves them null, and usage shows ids.
+
 ## An export for support
 
 When answers go wrong, the site's owner exports a period's calls to send to support: `AiExportService.CreateAsync(actor,

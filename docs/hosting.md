@@ -56,7 +56,7 @@ Keys are encrypted with ABP's string encryption: set `StringEncryption:DefaultPa
 |---|---|---|
 | `IAiScopes` | your scopes nest, or you want their names in usage | one level |
 | `IAiRights` | always: who administers the site and each scope; who owns the site (`IsSiteOwnerAsync`, for exports of calls); who administers an agent's account (`AdministersAccountAsync`, for its own limits) | no one |
-| `IAiAccounts` | you set limits on groups | no groups |
+| `IAiAccounts` | you set limits on groups (`GroupsOfAsync`), or want people's names in usage (`NamesOfAsync`) | no groups, no names |
 | `IAiNotices` | admins should hear of limits nearing (`LimitNearingAsync`) and reached (`LimitReachedAsync`) somewhere other than the log | the log |
 | `IAiAudit` | exports of calls should be in your audit log | the log |
 | `IAiConnectionSource` | you keep connections of your own (below) | AbpAi's `connections` table (`StoredAiConnections`) |

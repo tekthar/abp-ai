@@ -4,6 +4,15 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
+## [Unreleased]
+
+### Added
+
+- **People's names in usage:** `IAiAccounts.NamesOfAsync` (a default member: none) gives people's and accounts' names
+  by id. Usage grouped by `person` or `account` has them as each row's `Title`, as scopes have theirs, and recent calls
+  (`AiCallRow`) have `AccountName` and `OnBehalfOfName`. One ask for a query's names, not one a row. The sample host
+  names its people.
+
 ## [0.7.0] - 2026-11-14
 
 ### Added

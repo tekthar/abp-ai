@@ -45,6 +45,7 @@ public sealed partial class GatewayHostTests : IAsyncLifetime
     private readonly FussyProvider _fussy = new();
     private readonly CachingProvider _caching = new();
     private readonly RecordingAudit _audit = new();
+    private int _namesAsked;
     private WebApplicationFactory<Program>? _factory;
     private Guid _publicCloud;
     private Guid _onPrem;
@@ -56,6 +57,8 @@ public sealed partial class GatewayHostTests : IAsyncLifetime
         {
             s.Replace(ServiceDescriptor.Singleton<IAiNotices>(_notices));
             s.Replace(ServiceDescriptor.Singleton<IAiAudit>(_audit));
+            // The sample's organization, counting how often people's names are asked.
+            s.Replace(ServiceDescriptor.Singleton<IAiAccounts>(sp => new CountingAccounts(sp.GetRequiredService<SampleOrg>(), () => Interlocked.Increment(ref _namesAsked))));
             s.AddSingleton<IAiProvider>(_acme);
             s.AddSingleton<IAiProvider>(_slow);
             s.AddSingleton<IAiProvider>(_fussy);

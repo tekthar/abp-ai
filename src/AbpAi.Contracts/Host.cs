@@ -43,10 +43,17 @@ public interface IAiRights
     Task<bool> AdministersAccountAsync(AiActor actor, Guid accountId, CancellationToken cancellationToken) => Task.FromResult(false);
 }
 
-/// <summary>Accounts' groups, for per-person limits set on a group. The default: no groups.</summary>
+/// <summary>Accounts' groups, for per-person limits set on a group, and their names, for usage people read. The default: no groups, no names.</summary>
 public interface IAiAccounts
 {
     Task<IReadOnlyList<Guid>> GroupsOfAsync(Guid accountId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// People's and accounts' names by id (a person's, an agent's), for usage people read; ids it doesn't know are left
+    /// out. Asked once for a query's rows, not once a row. The default: none, so usage shows ids alone.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, string>> NamesOfAsync(IReadOnlyCollection<Guid> accountIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 }
 
 /// <summary>A limit passed its notice mark (80% by default) with this call: the limit and the call's scope and account.</summary>

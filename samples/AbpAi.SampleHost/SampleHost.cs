@@ -103,7 +103,7 @@ public sealed class SampleScope
 
 /// <summary>
 /// The sample's organization, from its settings: departments over projects (the scopes), who administers the site and
-/// each department, and groups. Insight's would be its model sets and org units, or AbpGuard's org tree.
+/// each department, groups, and people's names. Insight's would be its model sets and org units, or AbpGuard's org tree.
 /// </summary>
 public sealed class SampleOrg(IConfiguration configuration) : IAiScopes, IAiRights, IAiAccounts, ISingletonDependency
 {
@@ -114,6 +114,8 @@ public sealed class SampleOrg(IConfiguration configuration) : IAiScopes, IAiRigh
     private readonly Dictionary<Guid, SampleScope> _scopes = (configuration.GetSection("Sample:Scopes").Get<List<SampleScope>>() ?? []).ToDictionary(s => s.Id);
     private readonly Dictionary<Guid, List<Guid>> _groups = configuration.GetSection("Sample:Groups").GetChildren()
         .ToDictionary(c => Guid.Parse(c.Key), c => c.Get<List<Guid>>() ?? []);
+    private readonly Dictionary<Guid, string> _names = configuration.GetSection("Sample:Names").GetChildren()
+        .ToDictionary(c => Guid.Parse(c.Key), c => c.Value ?? "");
 
     public Guid IdOf(string key) => _scopes.Values.FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.OrdinalIgnoreCase))?.Id
         ?? throw new UserFriendlyException($"There's no scope {key}.", AiErrorCodes.Invalid);
@@ -139,4 +141,8 @@ public sealed class SampleOrg(IConfiguration configuration) : IAiScopes, IAiRigh
 
     public Task<IReadOnlyList<Guid>> GroupsOfAsync(Guid accountId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<Guid>>([.. _groups.Where(g => g.Value.Contains(accountId)).Select(g => g.Key)]);
+
+    /// <summary>People's and agents' names (<c>Sample:Names</c>), for usage; someone not named there is left out.</summary>
+    public Task<IReadOnlyDictionary<Guid, string>> NamesOfAsync(IReadOnlyCollection<Guid> accountIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(accountIds.Where(_names.ContainsKey).Distinct().ToDictionary(id => id, id => _names[id]));
 }

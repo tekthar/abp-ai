@@ -34,7 +34,8 @@ public static class AiUsageGroups
 
 /// <summary>
 /// One group's calls that answered, their tokens and cost, and the calls that failed or were refused. For scopes, the key
-/// is the scope's id and the title the host's name for it.
+/// is the scope's id and the title the host's name for it; for people and accounts, their id and the host's name for
+/// them (<see cref="IAiAccounts.NamesOfAsync"/>).
 /// </summary>
 public sealed record AiUsageRow(string Key, string? Title, int Calls, long InputTokens, long OutputTokens, decimal Cost)
 {
@@ -54,7 +55,14 @@ public sealed record AiUsageRow(string Key, string? Title, int Calls, long Input
 /// <param name="Code">Why a refused or failed call didn't answer (<see cref="AiRefusalCodes"/>).</param>
 public sealed record AiCallRow(Guid Id, DateTime At, string State, string? Code, string? Error, Guid? ScopeId, string? Scope, Guid? AccountId, Guid? OnBehalfOf,
     string Purpose, string? AboutKind, string? AboutId, string Alias, string Connection, string Provider, string Model, string DataClass, bool Streamed,
-    int InputTokens, int OutputTokens, int CacheWriteTokens, int CacheReadTokens, decimal Cost, int? DurationMs);
+    int InputTokens, int OutputTokens, int CacheWriteTokens, int CacheReadTokens, decimal Cost, int? DurationMs)
+{
+    /// <summary>The account's name, as the host gives it (<see cref="IAiAccounts.NamesOfAsync"/>); null when it gives none.</summary>
+    public string? AccountName { get; init; }
+
+    /// <summary>The name of the person it was for, as the host gives it; null when it gives none.</summary>
+    public string? OnBehalfOfName { get; init; }
+}
 
 public sealed record AiUsageReport(AiUsageQuery Query, IReadOnlyList<AiUsageRow> Rows, AiUsageRow Total);
 
@@ -62,10 +70,12 @@ public sealed record AiUsageReport(AiUsageQuery Query, IReadOnlyList<AiUsageRow>
 /// Usage people can read (AI4): by scope, person, purpose and model, the calls themselves, and exported. The site's
 /// admins read the whole site; a scope's admins read their scope and those under it, and nothing outside it; each person
 /// reads their own. Calls that answered count with their tokens and cost; failed and refused ones are counted apart,
-/// and cost nothing.
+/// and cost nothing. People and accounts are named as the host names them (<see cref="IAiAccounts.NamesOfAsync"/>).
 /// </summary>
-public sealed class AiUsageService(AiDb aiDb, AiAdminService admin, IAiScopes scopes, AiScopeChains chains) : ITransientDependency
+public sealed class AiUsageService(AiDb aiDb, AiAdminService admin, IAiScopes scopes, AiScopeChains chains, IAiAccounts accounts) : ITransientDependency
 {
+    private static readonly IReadOnlyDictionary<Guid, string> NoNames = new Dictionary<Guid, string>();
+
     public const int MaxExportRows = 100_000;
 
     public async Task<AiUsageReport> QueryAsync(AiActor actor, AiUsageQuery query, CancellationToken ct)
@@ -114,13 +124,28 @@ public sealed class AiUsageService(AiDb aiDb, AiAdminService admin, IAiScopes sc
             return found.OrderByDescending(r => r.At).Take(take).ToListAsync(ct);
         }, cancellationToken: ct);
         IReadOnlyDictionary<Guid, AiScopeInfo> names = await scopes.GetManyAsync(records.Where(r => r.ScopeId is not null).Select(r => r.ScopeId!.Value).Distinct(), ct);
-        return [.. records.Select(r => Row(r, r.ScopeId is { } id && names.TryGetValue(id, out AiScopeInfo? info) ? info.Key : null))];
+        IReadOnlyDictionary<Guid, string> people = await NamesAsync(records.SelectMany(r => new[] { r.AccountId, r.OnBehalfOf }), ct);
+        return [.. records.Select(r => Row(r, r.ScopeId is { } id && names.TryGetValue(id, out AiScopeInfo? info) ? info.Key : null, people))];
     }
 
-    /// <summary>A record as people read it, with its scope's key.</summary>
-    internal static AiCallRow Row(AiUsageRecord r, string? scope) => new(r.Id, r.At, r.State, r.Code, r.Error, r.ScopeId, scope, r.AccountId, r.OnBehalfOf, r.Purpose,
-        r.AboutKind, r.AboutId, r.Alias, r.Connection, r.Provider, r.Model, r.DataClass, r.Streamed, r.InputTokens, r.OutputTokens, r.CacheWriteTokens, r.CacheReadTokens,
-        r.Cost, r.DurationMs);
+    /// <summary>A record as people read it, with its scope's key and, where the host gives them, its account's and person's names.</summary>
+    internal static AiCallRow Row(AiUsageRecord r, string? scope, IReadOnlyDictionary<Guid, string>? names = null) => new(r.Id, r.At, r.State, r.Code, r.Error,
+        r.ScopeId, scope, r.AccountId, r.OnBehalfOf, r.Purpose, r.AboutKind, r.AboutId, r.Alias, r.Connection, r.Provider, r.Model, r.DataClass, r.Streamed,
+        r.InputTokens, r.OutputTokens, r.CacheWriteTokens, r.CacheReadTokens, r.Cost, r.DurationMs)
+    {
+        AccountName = NameOf(r.AccountId, names),
+        OnBehalfOfName = NameOf(r.OnBehalfOf, names),
+    };
+
+    private static string? NameOf(Guid? id, IReadOnlyDictionary<Guid, string>? names) =>
+        id is { } known && names is not null && names.TryGetValue(known, out string? name) ? name : null;
+
+    /// <summary>The host's names for the accounts, asked once for them all; nothing is asked when there are none.</summary>
+    private async Task<IReadOnlyDictionary<Guid, string>> NamesAsync(IEnumerable<Guid?> ids, CancellationToken ct)
+    {
+        List<Guid> wanted = [.. ids.OfType<Guid>().Distinct()];
+        return wanted.Count == 0 ? NoNames : await accounts.NamesOfAsync(wanted, ct);
+    }
 
     /// <summary>The calls themselves, as CSV: one line each, newest first, as many as <see cref="MaxExportRows"/>.</summary>
     public async Task<string> ExportCsvAsync(AiActor actor, AiUsageQuery query, CancellationToken ct)
@@ -183,8 +208,12 @@ public sealed class AiUsageService(AiDb aiDb, AiAdminService admin, IAiScopes sc
             };
         }, cancellationToken: ct);
 
-        List<AiUsageRow> rows = query.GroupBy == AiUsageGroups.Scope ? await UnderAsync(query.ScopeId, buckets, ct)
-            : [.. buckets.Select(b => b.Row(b.Key ?? "", null))];
+        List<AiUsageRow> rows = query.GroupBy switch
+        {
+            AiUsageGroups.Scope => await UnderAsync(query.ScopeId, buckets, ct),
+            AiUsageGroups.Person or AiUsageGroups.Account => await NamedAsync(buckets, ct),
+            _ => [.. buckets.Select(b => b.Row(b.Key ?? "", null))],
+        };
         rows = [.. rows.OrderByDescending(r => r.Cost).ThenBy(r => r.Key, StringComparer.Ordinal)];
         AiUsageRow total = new("total", null, rows.Sum(r => r.Calls), rows.Sum(r => r.InputTokens), rows.Sum(r => r.OutputTokens), rows.Sum(r => r.Cost))
         {
@@ -215,6 +244,13 @@ public sealed class AiUsageService(AiDb aiDb, AiAdminService admin, IAiScopes sc
 
         IReadOnlyDictionary<Guid, AiScopeInfo> names = await scopes.GetManyAsync(rolled.Keys.Where(k => k.Length > 0).Select(Guid.Parse), ct);
         return [.. rolled.Select(r => r.Value.Row(r.Key, r.Key.Length == 0 ? "(the site)" : names.TryGetValue(Guid.Parse(r.Key), out AiScopeInfo? n) ? n.Title : null))];
+    }
+
+    /// <summary>Each person's or account's row with the host's name for them as its title (null for calls with no account, or one it doesn't name).</summary>
+    private async Task<List<AiUsageRow>> NamedAsync(List<Bucket> buckets, CancellationToken ct)
+    {
+        IReadOnlyDictionary<Guid, string> names = await NamesAsync(buckets.Select(b => Guid.TryParse(b.Key, out Guid id) ? id : (Guid?)null), ct);
+        return [.. buckets.Select(b => b.Row(b.Key ?? "", NameOf(Guid.TryParse(b.Key, out Guid id) ? id : null, names)))];
     }
 
     private static async Task<List<Bucket>> SumAsync<TKey>(IQueryable<IGrouping<TKey, AiUsageRecord>> groups, Func<TKey, string?> key, CancellationToken ct)
