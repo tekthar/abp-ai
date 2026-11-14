@@ -12,6 +12,9 @@ All notable changes to AbpAi are written here. The format follows
   by id. Usage grouped by `person` or `account` has them as each row's `Title`, as scopes have theirs, and recent calls
   (`AiCallRow`) have `AccountName` and `OnBehalfOfName`. One ask for a query's names, not one a row. The sample host
   names its people.
+- **Who keeps the connections:** `AiSiteSettings.ConnectionsKeptByHost`, true when the host gives its own
+  `IAiConnectionSource` (the test that answers 409 to setting one), so a screen shows connections read-only. Read only:
+  a `PUT site` ignores it.
 
 ## [0.7.0] - 2026-11-14
 

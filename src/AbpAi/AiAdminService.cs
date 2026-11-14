@@ -17,6 +17,12 @@ public sealed record AiSiteSettings(bool ScopesMayConnect, bool KeepPrompts, int
     /// says). Always set when read; null when set keeps what's there.
     /// </summary>
     public string? ScopeAccess { get; init; }
+
+    /// <summary>
+    /// The host keeps the connections (its own <see cref="IAiConnectionSource"/>): they're listed here and set where it
+    /// keeps them, so a screen shows them read-only. Read only: a set ignores it.
+    /// </summary>
+    public bool ConnectionsKeptByHost { get; init; }
 }
 
 /// <summary>Which of the site's models a scope may use, when the site lists them, and whether it may connect its own.</summary>
@@ -170,10 +176,12 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }, cancellationToken: ct);
     }
 
-    /// <summary>Whether AbpAi keeps the connections itself (its own table), so they're set here.</summary>
+    /// <summary>
+    /// Whether AbpAi keeps the connections itself (its own table), so they're set here; the site's settings say the
+    /// opposite as <see cref="AiSiteSettings.ConnectionsKeptByHost"/>.
+    /// </summary>
     public bool KeepsConnections => source is StoredAiConnections;
 
-    /// <summary>The connections set on the site or a scope, from wherever they're kept.</summary>
     /// <summary>The access that applies in a scope, when the site lists what each scope may use: its own, or the nearest above it.</summary>
     public async Task<AiScopeAccessInfo> GetScopeAccessAsync(AiActor actor, Guid scopeId, CancellationToken ct)
     {
@@ -237,6 +245,7 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         await aiDb.RunAsync(db => db.AiScopeAccess.Where(a => a.Id == scopeId).ExecuteDeleteAsync(ct), cancellationToken: ct);
     }
 
+    /// <summary>The connections set on the site or a scope, from wherever they're kept.</summary>
     public async Task<List<AiConnectionInfo>> ListConnectionsAsync(AiActor actor, Guid? scopeId, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
@@ -769,9 +778,10 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         return site;
     }
 
-    private AiSiteSettings Info(AiSite site) => new(site.ScopesMayConnect, site.KeepPrompts, site.PromptDays, site.ScopeDataClasses, rules.Classes)
+    internal AiSiteSettings Info(AiSite site) => new(site.ScopesMayConnect, site.KeepPrompts, site.PromptDays, site.ScopeDataClasses, rules.Classes)
     {
         ScopeAccess = site.ScopeAccess,
+        ConnectionsKeptByHost = !KeepsConnections,
     };
 
     private static AiScopeAccessInfo Info(Guid scopeId, AiScopeAccess? access) =>

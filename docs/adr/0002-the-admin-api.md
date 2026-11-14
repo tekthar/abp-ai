@@ -68,6 +68,12 @@ gap that once made the first product write the gateway's tables itself.
 - **`AbpAi.HttpApi.Client`:** typed C# proxies of the API, for another .NET service that manages the gateway remotely.
   Today the one client is `@abpjs/ai`, generated from the OpenAPI document.
 
+## Added in 0.8.0
+
+What the shared screens (`@abpjs/ui`'s AI area) found missing on 0.7.0, all additive:
+
+- `AiSiteSettings.ConnectionsKeptByHost` (read only): the host keeps the connections, so a screen shows them read-only.
+
 ## Steps
 
 1. The package: its module, `AiHttpOptions`, `IAiCurrentActor`, the route convention, `[AiSensitive]`, the error codes.

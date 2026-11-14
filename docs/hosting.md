@@ -176,8 +176,9 @@ context.Services.Replace(ServiceDescriptor.Transient<IAiConnectionSource, MyConn
 
 With a source of your own, `AiAdminService.ListConnectionsAsync` lists yours, and `CreateConnectionAsync`,
 `UpdateConnectionAsync`, `DeleteConnectionAsync` and `DiscoverModelsAsync` are refused with
-`AiErrorCodes.HostConnections`: connections are set where you keep them. The rules that bind scopes' connections still
-hold: a scope's connection serves only while the site lets scopes connect, and receives only the classes the site lets
+`AiErrorCodes.HostConnections`: connections are set where you keep them, and the site's settings say so
+(`AiSiteSettings.ConnectionsKeptByHost`, read only), for a screen to show them read-only. The rules that bind scopes'
+connections still hold: a scope's connection serves only while the site lets scopes connect, and receives only the classes the site lets
 scopes' connections receive.
 
 ## Which site models a scope may use

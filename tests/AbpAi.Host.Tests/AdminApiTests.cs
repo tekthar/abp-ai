@@ -91,6 +91,19 @@ public sealed class AdminApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_sites_settings_say_who_keeps_the_connections_and_a_set_cant_change_it()
+    {
+        HttpClient admin = As(SiteAdmin);
+        JsonElement read = await admin.GetFromJsonAsync<JsonElement>($"{Prefix}/site");
+        Assert.False(read.GetProperty("connectionsKeptByHost").GetBoolean());
+
+        AiSiteSettings site = read.Deserialize<AiSiteSettings>(JsonSerializerOptions.Web)!;
+        HttpResponseMessage set = await admin.PutAsJsonAsync($"{Prefix}/site", site with { ConnectionsKeptByHost = true });
+        Assert.Equal(HttpStatusCode.OK, set.StatusCode);
+        Assert.False((await set.Content.ReadFromJsonAsync<AiSiteSettings>())!.ConnectionsKeptByHost);
+    }
+
+    [Fact]
     public async Task Connections_aliases_limits_and_where_an_alias_leads_over_http()
     {
         HttpClient admin = As(SiteAdmin);

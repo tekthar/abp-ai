@@ -4,7 +4,10 @@ using Volo.Abp.AspNetCore.Mvc;
 
 namespace AbpAi.HttpApi;
 
-/// <summary>The site's AI settings: whether scopes may connect, prompts kept and for how long, the data classes.</summary>
+/// <summary>
+/// The site's AI settings: whether scopes may connect, prompts kept and for how long, the data classes, and whether the
+/// host keeps the connections (read only).
+/// </summary>
 [Route("site")]
 public class AiSiteController(AiAdminService admin, IAiCurrentActor actor) : AbpControllerBase
 {

@@ -79,6 +79,12 @@ public sealed class HostConnectionsTests : IAsyncLifetime
 
         HttpResponseMessage made = await http.PostAsJsonAsync("/api/ai/connections", new AiConnectionInput("mine", "demo", ["m"], [AiDataClasses.Public]));
         Assert.Equal(System.Net.HttpStatusCode.Conflict, made.StatusCode);
+
+        // The site's settings say so, for a screen to show them read-only; a set can't say otherwise.
+        AiSiteSettings site = (await http.GetFromJsonAsync<AiSiteSettings>("/api/ai/site"))!;
+        Assert.True(site.ConnectionsKeptByHost);
+        HttpResponseMessage set = await http.PutAsJsonAsync("/api/ai/site", site with { ConnectionsKeptByHost = false });
+        Assert.True((await set.Content.ReadFromJsonAsync<AiSiteSettings>())!.ConnectionsKeptByHost);
     }
 
     [Fact]
