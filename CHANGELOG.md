@@ -4,7 +4,10 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
-## [Unreleased]
+## [0.8.0] - 2026-11-14
+
+What the shared settings screens (`@abpjs/ui`'s AI area) found missing on 0.7.0, all additive: a host on 0.7.0 builds
+and behaves as before. No new tables or columns, so no migration.
 
 ### Added
 

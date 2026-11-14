@@ -39,7 +39,8 @@ AbpAgent.
   doesn't fit is refused with `data_not_allowed` before it leaves, or falls back to a target that may receive it. A
   call that states no class counts as the highest. Prompts aren't kept unless the site turns that on, for a period.
 - **Usage people can read:** by scope, person, account, purpose, model, connection, day and data class, and export as
-  CSV. A scope's admins see their scope and those under it, nothing else; each person sees their own.
+  CSV. Scopes and people are named as the host names them (`IAiScopes`, `IAiAccounts.NamesOfAsync`). A scope's admins
+  see their scope and those under it, nothing else; each person sees their own.
 - **The demo model as a test tool:** `AiScript` answers for it with scripted replies (from code or a JSON file), so
   features that use AI, and evals, run in CI with no provider.
 
@@ -50,7 +51,7 @@ AbpAgent.
 | `AbpAi.Contracts` | `IAi` and its records, refusals, `IAiProvider`, `IAiDemoResponder`, the host's seams | Plain .NET |
 | `AbpAi` | The service, the ledger, limits, notices, connections, the admin and usage services, the built-in providers; tables in schema `ai` | ABP, EF Core (PostgreSQL) |
 | `AbpAi.Agents` | AbpAgent's `IAgentModels` on top of `IAi`, so neither package needs the other | Both (not on nuget.org until AbpAgent's contracts are) |
-| `AbpAi.HttpApi` | The admin API over HTTP: site settings, connections, aliases, limits, scopes' access, usage, exports, under a prefix the host sets | `AbpAi`, ABP's MVC |
+| `AbpAi.HttpApi` | The admin API over HTTP: site settings, connections, aliases, limits, scopes' access, a scope's own view, a call to try, usage, exports, under a prefix the host sets | `AbpAi`, ABP's MVC |
 
 Coming from ABP's module template? [Where ABP's layers are in this repository](docs/abp-layers.md).
 
