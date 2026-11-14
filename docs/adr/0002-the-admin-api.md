@@ -73,6 +73,8 @@ gap that once made the first product write the gateway's tables itself.
 What the shared screens (`@abpjs/ui`'s AI area) found missing on 0.7.0, all additive:
 
 - `AiSiteSettings.ConnectionsKeptByHost` (read only): the host keeps the connections, so a screen shows them read-only.
+- `GET scopes/{scopeId}/view`, for the scope's admins: a scope's settings page names the site's models open to it and the
+  aliases and limits it gets from above, which its admins can't list (the site's connections are for the site's admins).
 
 ## Steps
 

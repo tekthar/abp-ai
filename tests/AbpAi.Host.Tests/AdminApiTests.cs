@@ -137,6 +137,25 @@ public sealed class AdminApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_scopes_admin_reads_its_view_and_no_one_else_does()
+    {
+        HttpClient site = As(SiteAdmin);
+        HttpResponseMessage made = await site.PostAsJsonAsync($"{Prefix}/connections", new AiConnectionInput("cloud", "demo", ["cloud-large"], [AiDataClasses.Public]));
+        Guid connection = (await made.Content.ReadFromJsonAsync<AiConnectionInfo>())!.Id;
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/aliases/fast", new[] { new AiAliasTarget(connection) })).StatusCode);
+
+        // Budget's admins are Finance's: the site's model (every one, while the site doesn't list them) and the site's alias.
+        HttpResponseMessage read = await As(FinanceAdmin).GetAsync($"{Prefix}/scopes/{Budget}/view");
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        JsonElement view = await read.Content.ReadFromJsonAsync<JsonElement>();
+        JsonElement model = Assert.Single(view.GetProperty("models").EnumerateArray());
+        Assert.Equal(("cloud-large", false), (model.GetProperty("model").GetString(), model.GetProperty("own").GetBoolean()));
+        Assert.Equal("fast", Assert.Single(view.GetProperty("aliasesFromAbove").EnumerateArray()).GetProperty("name").GetString());
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await As(Ben).GetAsync($"{Prefix}/scopes/{Budget}/view")).StatusCode);
+    }
+
+    [Fact]
     public void The_api_is_in_its_own_openapi_group()
     {
         IReadOnlyList<ApiDescriptionGroup> groups = _factory!.Services.GetRequiredService<IApiDescriptionGroupCollectionProvider>().ApiDescriptionGroups.Items;

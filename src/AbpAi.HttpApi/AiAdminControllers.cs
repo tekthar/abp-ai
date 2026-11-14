@@ -99,7 +99,10 @@ public class AiAccountLimitsController(AiAdminService admin, IAiCurrentActor act
         await admin.SetAccountLimitAsync(await actor.GetAsync(ct), accountId, input, ct);
 }
 
-/// <summary>Which of the site's models a scope may use, and whether it may add connections of its own.</summary>
+/// <summary>
+/// Which of the site's models a scope may use, and whether it may add connections of its own (for the site's admins);
+/// and a scope's own view, for its admins.
+/// </summary>
 [Route("scopes")]
 public class AiScopesController(AiAdminService admin, IAiCurrentActor actor) : AbpControllerBase
 {
@@ -116,6 +119,13 @@ public class AiScopesController(AiAdminService admin, IAiCurrentActor actor) : A
     /// <summary>Back to the site's default for the scope.</summary>
     [HttpDelete("{scopeId:guid}/access"), AiSensitive]
     public async Task Delete(Guid scopeId, CancellationToken ct) => await admin.DeleteScopeAccessAsync(await actor.GetAsync(ct), scopeId, ct);
+
+    /// <summary>
+    /// The scope as its admins see it: the models it may use now (the site's open to it, and its own), the aliases it
+    /// gets from above, and the limits set above it.
+    /// </summary>
+    [HttpGet("{scopeId:guid}/view")]
+    public async Task<AiScopeView> View(Guid scopeId, CancellationToken ct) => await admin.GetScopeViewAsync(await actor.GetAsync(ct), scopeId, ct);
 }
 
 /// <summary>

@@ -964,6 +964,46 @@
         }
       }
     },
+    "/api/ai/scopes/{scopeId}/view": {
+      "get": {
+        "tags": [
+          "AiScopes"
+        ],
+        "parameters": [
+          {
+            "name": "scopeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiScopeView"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiScopeView"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiScopeView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ai/resolve/{alias}": {
       "get": {
         "tags": [
@@ -2363,6 +2403,87 @@
             }
           },
           "mayConnect": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AiScopeModel": {
+        "required": [
+          "connectionId",
+          "connection",
+          "setOnScopeId",
+          "model",
+          "settings",
+          "price",
+          "own"
+        ],
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "connection": {
+            "type": "string"
+          },
+          "setOnScopeId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "model": {
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/AiModelSettings"
+          },
+          "price": {
+            "$ref": "#/components/schemas/AiPrice"
+          },
+          "own": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AiScopeView": {
+        "required": [
+          "scopeId",
+          "models",
+          "aliasesFromAbove",
+          "limitsFromAbove",
+          "mayConnect",
+          "connectionsKeptByHost"
+        ],
+        "type": "object",
+        "properties": {
+          "scopeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiScopeModel"
+            }
+          },
+          "aliasesFromAbove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiAliasInfo"
+            }
+          },
+          "limitsFromAbove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiLimitInfo"
+            }
+          },
+          "mayConnect": {
+            "type": "boolean"
+          },
+          "connectionsKeptByHost": {
             "type": "boolean"
           }
         }

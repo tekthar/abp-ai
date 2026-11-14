@@ -57,6 +57,33 @@ public sealed record AiNeeds(bool Tools = false, bool Images = false, bool Struc
 }
 
 /// <summary>
+/// What a call in a scope chain may reach: the connections that are on and serve it (the site's, and those set on its
+/// scopes while the site lets scopes connect and, when it lists access, the scope's access does too), each scope's
+/// receiving only the classes the site lets scopes' connections receive now; and of the site's models, those the access
+/// opens when the site lists them.
+/// </summary>
+/// <param name="ScopesMayConnect">The chain's scopes' own connections serve it, and its scope may set connections of its own.</param>
+internal sealed record AiReach(IReadOnlyDictionary<Guid, AiConnectionDescriptor> Usable, bool Listed, AiScopeAccess? Access, bool ScopesMayConnect)
+{
+    /// <summary>What a call in the chain may reach, by the site's settings and the access that applies (null for the site, or when none is set).</summary>
+    public static AiReach Of(AiScopeChain chain, AiSite? site, AiScopeAccess? access, IEnumerable<AiConnectionDescriptor> connections)
+    {
+        bool listed = site?.ScopeAccess == AiScopeAccessModes.Listed && chain.Scope is not null;
+        bool scopesMayConnect = (site?.ScopesMayConnect ?? false) && (!listed || access is { MayConnect: true });
+        IReadOnlyList<string> scopeClasses = site?.ScopeDataClasses is { Count: > 0 } set ? set : AiAdminService.DefaultScopeDataClasses;
+        Dictionary<Guid, AiConnectionDescriptor> usable = connections
+            .Where(c => c.Enabled && chain.Sees(c.ScopeId) && (c.ScopeId is null || scopesMayConnect))
+            .Select(c => c.ScopeId is null ? c : c with { DataClasses = [.. c.DataClasses.Where(d => scopeClasses.Contains(d, StringComparer.OrdinalIgnoreCase))] })
+            .DistinctBy(c => c.Id)
+            .ToDictionary(c => c.Id);
+        return new AiReach(usable, listed, listed ? access : null, scopesMayConnect);
+    }
+
+    /// <summary>A model of one of its connections is open to the call's scope: a scope's connection's always, the site's as the access says when the site lists them.</summary>
+    public bool Opens(AiConnectionDescriptor connection, string model) => !Listed || connection.ScopeId is not null || Access?.Opens(connection.Id, model) == true;
+}
+
+/// <summary>
 /// Leads an alias to a model: the alias set on the call's scope, else on the nearest scope above it, else on the site;
 /// else a model by its name (or its id) on the nearest connection that offers it. Of the alias's targets, the first
 /// whose model is on, is open to the call's scope, can do what the call needs (tools, images, a schema) and may receive
@@ -81,18 +108,8 @@ public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource s
             AiScopeAccess? r = s?.ScopeAccess == AiScopeAccessModes.Listed ? await AccessOfAsync(db, chain, ct) : null;
             return (a, s, r);
         }, cancellationToken: ct);
-        IReadOnlyList<AiConnectionDescriptor> connections = await source.ListAsync(ids, ct);
-
-        // A scope's connections count only while the site lets scopes connect (and, when it lists access, the scope's
-        // access does), and receive only what the site lets them now.
-        bool listed = site?.ScopeAccess == AiScopeAccessModes.Listed && chain.Scope is not null;
-        bool scopesMayConnect = (site?.ScopesMayConnect ?? false) && (!listed || access is { MayConnect: true });
-        IReadOnlyList<string> scopeClasses = site?.ScopeDataClasses is { Count: > 0 } set ? set : AiAdminService.DefaultScopeDataClasses;
-        Dictionary<Guid, AiConnectionDescriptor> usable = connections
-            .Where(c => c.Enabled && chain.Sees(c.ScopeId) && (c.ScopeId is null || scopesMayConnect))
-            .Select(c => c.ScopeId is null ? c : c with { DataClasses = [.. c.DataClasses.Where(d => scopeClasses.Contains(d, StringComparer.OrdinalIgnoreCase))] })
-            .DistinctBy(c => c.Id)
-            .ToDictionary(c => c.Id);
+        AiReach reach = AiReach.Of(chain, site, access, await source.ListAsync(ids, ct));
+        IReadOnlyDictionary<Guid, AiConnectionDescriptor> usable = reach.Usable;
 
         AiAlias? named = aliases.OrderBy(a => chain.Nearness(a.ScopeId)).FirstOrDefault();
         List<AiRoute> candidates = named is not null
@@ -105,7 +122,7 @@ public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource s
                 .Select(c => ModelCalled(c, name) is { } model ? Route(name, c, model, "model", c.ScopeId) : null)
                 .OfType<AiRoute>()];
 
-        List<AiRoute> open = [.. candidates.Where(r => !listed || r.Connection.ScopeId is not null || access?.Opens(r.Connection.Id, r.Model) == true)];
+        List<AiRoute> open = [.. candidates.Where(r => reach.Opens(r.Connection, r.Model))];
         // A host whose models' flags are only for people to read (AbpAi:CapabilitiesDecide false) has them chosen by alias, access and being on.
         List<AiRoute> fit = options.Value.CapabilitiesDecide ? [.. open.Where(needs.MetBy)] : open;
         if (fit.Count == 0)
@@ -149,7 +166,7 @@ public sealed class AiRouter(AiDb aiDb, AiDataRules rules, IAiConnectionSource s
     /// The route to a model, with what it can do; null when it's off. A model with no settings is on and takes
     /// everything; one with settings takes what they say, and follows a schema as they say, else as its connection does.
     /// </summary>
-    private static AiRoute? Route(string alias, AiConnectionDescriptor c, string model, string where, Guid? setOn)
+    internal static AiRoute? Route(string alias, AiConnectionDescriptor c, string model, string where, Guid? setOn)
     {
         AiModelSettings? settings = c.SettingsOf(model);
         return settings is { Enabled: false }

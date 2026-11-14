@@ -15,6 +15,11 @@ All notable changes to AbpAi are written here. The format follows
 - **Who keeps the connections:** `AiSiteSettings.ConnectionsKeptByHost`, true when the host gives its own
   `IAiConnectionSource` (the test that answers 409 to setting one), so a screen shows connections read-only. Read only:
   a `PUT site` ignores it.
+- **A scope's own view:** `AiAdminService.GetScopeViewAsync` and `GET {prefix}/scopes/{scopeId}/view`, for those who
+  administer the scope (who can't list the site's connections): `AiScopeView` with the models it may use now
+  (`AiScopeModel`: connection, model, its settings as the router reads them, price, where its connection is set, and
+  `Own`), the aliases it gets from above that it doesn't replace and the limits set above it (each with where it's set),
+  `MayConnect` and `ConnectionsKeptByHost`. By the router's own rules, which now live in one place for both.
 
 ## [0.7.0] - 2026-11-14
 

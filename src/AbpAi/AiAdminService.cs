@@ -36,6 +36,27 @@ public sealed record AiScopeAccessInput(bool AllSiteModels, IReadOnlyList<AiMode
 public sealed record AiScopeAccessInfo(Guid ScopeId, Guid? SetOnScopeId, bool AllSiteModels, IReadOnlyList<AiModelRef> SiteModels, bool MayConnect);
 
 /// <summary>
+/// One of the models a scope may use now: its connection, the provider's id for it, what it can do as the router reads
+/// it (a model with no settings is on and takes everything; its schema rule, unset, is its connection's), and its price.
+/// </summary>
+/// <param name="SetOnScopeId">Where its connection is set: null for the site's, else the scope or one above it.</param>
+/// <param name="Own">Its connection is the scope's own.</param>
+public sealed record AiScopeModel(Guid ConnectionId, string Connection, Guid? SetOnScopeId, string Model, AiModelSettings Settings, AiPrice Price, bool Own);
+
+/// <summary>
+/// A scope's own view of its AI, for its admins, who don't read the site's settings: the models it may use now (the
+/// site's its access opens, and the connections set on it and above it while it may use them), the aliases it gets from
+/// above (the site's and its parents', the nearest of each name, but not those it sets itself), and the limits set above
+/// it (its parents' and the site's), which count its calls too.
+/// </summary>
+/// <param name="AliasesFromAbove">Each with where it's set (<see cref="AiAliasInfo.ScopeId"/>: null for the site).</param>
+/// <param name="LimitsFromAbove">Each with where it's set (<see cref="AiLimitInfo.ScopeId"/>: null for the site), the nearest first.</param>
+/// <param name="MayConnect">It may set connections of its own now: the site lets scopes connect and, when it lists access, the scope's access does.</param>
+/// <param name="ConnectionsKeptByHost">The host keeps the connections, as <see cref="AiSiteSettings.ConnectionsKeptByHost"/> says.</param>
+public sealed record AiScopeView(Guid ScopeId, IReadOnlyList<AiScopeModel> Models, IReadOnlyList<AiAliasInfo> AliasesFromAbove, IReadOnlyList<AiLimitInfo> LimitsFromAbove,
+    bool MayConnect, bool ConnectionsKeptByHost);
+
+/// <summary>
 /// A connection as an admin sets it. A null key keeps the one there; an empty one takes it away. Null model settings keep
 /// the ones there (for the models it still offers).
 /// </summary>
@@ -243,6 +264,61 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     {
         await SiteAdminAsync(actor, ct);
         await aiDb.RunAsync(db => db.AiScopeAccess.Where(a => a.Id == scopeId).ExecuteDeleteAsync(ct), cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// A scope's own view, for those who administer it: the models it may use now, the aliases it gets from above and
+    /// the limits set above it (<see cref="AiScopeView"/>). By the same rules a call in it is routed by.
+    /// </summary>
+    public async Task<AiScopeView> GetScopeViewAsync(AiActor actor, Guid scopeId, CancellationToken ct)
+    {
+        await AdminAsync(actor, scopeId, ct);
+        AiScopeChain chain = await chains.OfAsync(scopeId, ct);
+        List<Guid> ids = [.. chain.Up];
+        (AiSite? site, AiScopeAccess? access, List<AiAlias> aliases, List<AiLimit> limits) = await aiDb.RunAsync(async db =>
+        {
+            AiSite? s = await db.AiSites.AsNoTracking().FirstOrDefaultAsync(x => x.Id == AiSite.TheId, ct);
+            AiScopeAccess? a = s?.ScopeAccess == AiScopeAccessModes.Listed ? await AiRouter.AccessOfAsync(db, chain, ct) : null;
+            List<AiAlias> al = await db.AiAliases.AsNoTracking().Where(x => x.ScopeId == null || ids.Contains(x.ScopeId.Value)).ToListAsync(ct);
+            List<AiLimit> l = await db.AiLimits.AsNoTracking().Where(x => x.ScopeId == null || ids.Contains(x.ScopeId.Value)).ToListAsync(ct);
+            return (s, a, al, l);
+        }, cancellationToken: ct);
+        return ViewOf(chain, site, access, await source.ListAsync(ids, ct), aliases, limits, !KeepsConnections);
+    }
+
+    /// <summary>A scope's view (the chain's own scope's) from what's set: the site's settings, the access that applies, the connections, aliases and limits on the chain.</summary>
+    internal static AiScopeView ViewOf(AiScopeChain chain, AiSite? site, AiScopeAccess? access, IEnumerable<AiConnectionDescriptor> connections,
+        IReadOnlyCollection<AiAlias> aliases, IEnumerable<AiLimit> limits, bool keptByHost)
+    {
+        Guid scopeId = chain.Scope ?? throw new ArgumentException("A scope's view is of a scope, not the site.", nameof(chain));
+        AiReach reach = AiReach.Of(chain, site, access, connections);
+        List<AiScopeModel> models = [.. reach.Usable.Values.OrderBy(c => chain.Nearness(c.ScopeId)).ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(c => c.Models.Distinct().Where(m => reach.Opens(c, m))
+                .Select(m => AiRouter.Route("", c, m, "", null) is { } route ? Model(c, route, scopeId) : null)
+                .OfType<AiScopeModel>())];
+        HashSet<string> own = [.. aliases.Where(a => a.ScopeId == scopeId).Select(a => a.Name)];
+        List<AiAliasInfo> fromAbove = [.. aliases.Where(a => a.ScopeId != scopeId && chain.Sees(a.ScopeId) && !own.Contains(a.Name))
+            .GroupBy(a => a.Name, StringComparer.Ordinal)
+            .Select(g => g.OrderBy(a => chain.Nearness(a.ScopeId)).First())
+            .OrderBy(a => a.Name, StringComparer.Ordinal)
+            .Select(Info)];
+        List<AiLimitInfo> above = [.. limits.Where(l => l.ScopeId != scopeId && chain.Sees(l.ScopeId))
+            .OrderBy(l => chain.Nearness(l.ScopeId)).ThenBy(l => l.Kind, StringComparer.Ordinal).ThenBy(l => l.Measure, StringComparer.Ordinal)
+            .ThenBy(l => l.Period, StringComparer.Ordinal)
+            .Select(Info)];
+        return new AiScopeView(scopeId, models, fromAbove, above, reach.ScopesMayConnect, keptByHost);
+    }
+
+    /// <summary>One of a connection's models as a scope's view names it: its settings as the router reads them (<see cref="AiRouter.Route"/>).</summary>
+    private static AiScopeModel Model(AiConnectionDescriptor c, AiRoute route, Guid scopeId)
+    {
+        AiModelSettings? set = c.SettingsOf(route.Model);
+        AiModelSettings settings = new()
+        {
+            Name = route.ModelName, Enabled = true, Tools = route.Tools, Images = route.Images, StructuredOutput = route.StructuredOutput, Embeds = route.Embeds,
+            ContextTokens = set?.ContextTokens, PriceSetAt = set?.PriceSetAt,
+        };
+        return new AiScopeModel(c.Id, c.Name, c.ScopeId, route.Model, settings, c.PriceOf(route.Model), c.ScopeId == scopeId);
     }
 
     /// <summary>The connections set on the site or a scope, from wherever they're kept.</summary>

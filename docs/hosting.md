@@ -192,6 +192,12 @@ none anywhere above it may use none of the site's models. Calls on the site itse
 site's admins set access (`GetScopeAccessAsync`, `ListScopeAccessAsync`, `SetScopeAccessAsync`, `DeleteScopeAccessAsync`),
 and a scope's alias may lead only to the site's models open to it.
 
+A scope's admins don't read the site's settings, so `AiAdminService.GetScopeViewAsync(actor, scopeId)` gives them their
+scope as a call in it sees it (`AiScopeView`): the models it may use now (the site's its access opens, and the
+connections set on it and above it while it may use them, each with its connection, settings, price and whether it's the
+scope's own), the aliases it gets from above (the nearest of each name it doesn't set itself), the limits set above it,
+whether it may connect its own, and whether the host keeps the connections.
+
 ## Calls: system blocks and provider options
 
 `AiRequest.SystemBlocks` takes the system prompt as the Messages API's blocks (with `cache_control`, for a provider's
@@ -220,6 +226,7 @@ for support). Their refusals are `UserFriendlyException`s with `AiErrorCodes.For
 | `GET aliases`, `PUT`, `DELETE aliases/{name}` | Aliases and their targets (`?scopeId=`) |
 | `GET`, `POST limits`, `DELETE limits/{id}`; `GET`, `POST accounts/{id}/limits` | Limits per scope, per person or group, and an account's own |
 | `GET scopes/access`, `GET`, `PUT`, `DELETE scopes/{id}/access` | Which site models a scope may use |
+| `GET scopes/{id}/view` | A scope's own view, for its admins: the models it may use now, the aliases it gets from above, the limits set above it |
 | `GET resolve/{alias}` | Where an alias leads now (`?scopeId=&dataClass=`), for its admins; 422 with the gateway's code when nothing may take it |
 | `POST usage`, `GET usage/mine`, `POST usage/recent`, `GET usage/mine/recent`, `POST usage/csv` | Usage |
 | `GET`, `POST exports`, `POST exports/{id}/file`, `DELETE exports/{id}` | Exports of calls, for the site's owner |
