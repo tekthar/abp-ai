@@ -6,6 +6,18 @@ All notable changes to AbpAi are written here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **AbpAi.AspNetCore**, a new package: the admin API over HTTP ([ADR 0002](docs/adr/0002-the-admin-api.md)). Depend on
+  `AbpAiAspNetCoreModule` and the services are served under `AiHttpOptions.RoutePrefix` (`api/ai` by default): site
+  settings, connections (test, provider models, discovery), aliases, limits per scope and per account, scopes' access,
+  where an alias leads, usage (a query, a person's own, recent calls, CSV) and exports of calls. Every action wants a
+  signed-in caller (or `Policy`); the actor is `IAiCurrentActor`'s (the user's id by default); actions that change
+  settings or hand out data are `[AiSensitive]`, and `Sensitive` adds the host's check (AbpGuard's step-up, say). The
+  gateway's codes answer 403, 400 and 409, and every refusal is ABP's error JSON. The controllers are visible to the API
+  explorer (`OpenApiGroupName` for a document of their own) and aren't application services, so AbpMcp leaves them be.
+- The sample host serves the package's API instead of its own controller, which keeps only its `ask`.
+
 ## [0.6.0] - 2026-11-13
 
 For a host whose agents run in scopes the gateway keeps no settings for, and that words its AI's refusals its own way,

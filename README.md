@@ -50,6 +50,7 @@ AbpAgent.
 | `AbpAi.Contracts` | `IAi` and its records, refusals, `IAiProvider`, `IAiDemoResponder`, the host's seams | Plain .NET |
 | `AbpAi` | The service, the ledger, limits, notices, connections, the admin and usage services, the built-in providers; tables in schema `ai` | ABP, EF Core (PostgreSQL) |
 | `AbpAi.Agents` | AbpAgent's `IAgentModels` on top of `IAi`, so neither package needs the other | Both (not on nuget.org until AbpAgent's contracts are) |
+| `AbpAi.AspNetCore` | The admin API over HTTP: site settings, connections, aliases, limits, scopes' access, usage, exports, under a prefix the host sets | `AbpAi`, ABP's MVC |
 
 ## Getting started
 
@@ -82,6 +83,18 @@ AiReply reply = await ai.CompleteAsync(new AiRequest("smart", AiMessages.User("D
 });
 ```
 
+The admin API, for a settings screen of your own or `@abpjs/ai`, is one more module:
+
+```csharp
+[DependsOn(typeof(AbpAiModule), typeof(AbpAiAspNetCoreModule))]
+// ...
+Configure<AiHttpOptions>(o =>
+{
+    o.RoutePrefix = "api/ai";                                           // the default
+    o.Sensitive = action => action.Filters.Add(new StepUpAttribute());  // the password again, AbpGuard's step-up say
+});
+```
+
 See [hosting](docs/hosting.md), [data rules](docs/data-rules.md), [limits](docs/limits.md), [usage](docs/usage.md), [embeddings](docs/embeddings.md),
 [testing with the demo model](docs/testing.md), [AbpAgent](docs/agents.md), and [moving a product onto
 AbpAi](docs/moving-onto-abp-ai.md). Why it is shaped this way, and the answers to the open questions, are in
@@ -103,7 +116,8 @@ bash scripts/check-names.sh   # no product's name but AbpAi's
 ## Releasing
 
 Set `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, move CHANGELOG.md's Unreleased to the version, and
-push a tag `v<version>` (`v0.2.0`). CI runs the checks, then pushes `AbpAi`, `AbpAi.Contracts` and `AbpAi.Agents` to
+push a tag `v<version>` (`v0.2.0`). CI runs the checks, then pushes `AbpAi`, `AbpAi.Contracts`, `AbpAi.Agents` and
+`AbpAi.AspNetCore` to
 nuget.org through Trusted Publishing (the policy names this repository, `ci.yml` and the `release` environment; the
 repository variable `NUGET_USER` is the nuget.org account) and makes a GitHub release.
 

@@ -205,6 +205,32 @@ own gets the whole call as `AiProviderCall.Request`.
 ## The API
 
 The admin and usage services are the API: `AiAdminService` (site settings, connections, models, scopes' access,
-aliases, limits) and `AiUsageService` (queries, a person's own, export). Map them to your routes; the sample's
-`AiController` shows one way. Their refusals are `UserFriendlyException`s with `AiErrorCodes.Forbidden` (403),
-`Invalid` (400) or `HostConnections` (409).
+aliases, limits), `AiUsageService` (queries, a person's own, recent calls, CSV) and `AiExportService` (exports of calls
+for support). Their refusals are `UserFriendlyException`s with `AiErrorCodes.Forbidden` (403), `Invalid` (400) or
+`HostConnections` (409).
+
+`AbpAi.AspNetCore` serves them over HTTP ([ADR 0002](adr/0002-the-admin-api.md)): depend on `AbpAiAspNetCoreModule`.
+
+| Route (under `AiHttpOptions.RoutePrefix`, `api/ai` by default) | What |
+|---|---|
+| `GET`, `PUT site` | The site's settings |
+| `GET`, `POST connections`, `PUT`, `DELETE connections/{id}` | Connections, the site's or a scope's (`?scopeId=`); 409 when the host keeps them |
+| `POST connections/{id}/test`, `GET connections/{id}/provider-models`, `POST connections/{id}/discover` | Trying one, and its provider's models |
+| `GET aliases`, `PUT`, `DELETE aliases/{name}` | Aliases and their targets (`?scopeId=`) |
+| `GET`, `POST limits`, `DELETE limits/{id}`; `GET`, `POST accounts/{id}/limits` | Limits per scope, per person or group, and an account's own |
+| `GET scopes/access`, `GET`, `PUT`, `DELETE scopes/{id}/access` | Which site models a scope may use |
+| `GET resolve/{alias}` | Where an alias leads now (`?scopeId=&dataClass=`), for its admins; 422 with the gateway's code when nothing may take it |
+| `POST usage`, `GET usage/mine`, `POST usage/recent`, `GET usage/mine/recent`, `POST usage/csv` | Usage |
+| `GET`, `POST exports`, `POST exports/{id}/file`, `DELETE exports/{id}` | Exports of calls, for the site's owner |
+
+- **Who:** every action wants a signed-in caller, or `AiHttpOptions.Policy`; what they may do is the services' check.
+  The actor is `IAiCurrentActor`'s: the signed-in user's id by default; replace it when your `IAiRights` reads more.
+- **The password again:** the actions that change settings or hand out data are `[AiSensitive]`;
+  `AiHttpOptions.Sensitive` adds what that means for you (AbpGuard's `StepUpAttribute`, say). `Configure` reaches every action.
+- **OpenAPI:** the controllers are visible to the API explorer, in your own document by default or in
+  `AiHttpOptions.OpenApiGroupName`'s.
+- **Errors:** the module maps the gateway's codes to their statuses, and answers every refusal with ABP's error JSON,
+  whatever the caller accepts.
+- They're plain controllers, not application services, so AbpMcp never makes tools of them.
+
+The sample host serves them under `api/ai`, with its own `ask` beside them.

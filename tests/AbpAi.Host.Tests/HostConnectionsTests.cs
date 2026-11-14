@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using AbpAi.SampleHost;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -66,6 +67,18 @@ public sealed class HostConnectionsTests : IAsyncLifetime
         await connection.OpenAsync();
         await using NpgsqlCommand drop = new($"DROP DATABASE IF EXISTS \"{_database}\" WITH (FORCE)", connection);
         await drop.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
+    public async Task The_admin_api_lists_the_hosts_connections_and_leaves_setting_them_to_the_host()
+    {
+        HttpClient http = _factory!.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Account", SiteAdmin.Id.ToString());
+        List<AiConnectionInfo> listed = (await http.GetFromJsonAsync<List<AiConnectionInfo>>("/api/ai/connections"))!;
+        Assert.Contains(listed, c => c.Id == _bedrock.Id);
+
+        HttpResponseMessage made = await http.PostAsJsonAsync("/api/ai/connections", new AiConnectionInput("mine", "demo", ["m"], [AiDataClasses.Public]));
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, made.StatusCode);
     }
 
     [Fact]

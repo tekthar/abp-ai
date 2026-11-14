@@ -744,7 +744,7 @@ public sealed partial class GatewayHostTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
         Assert.Equal(AiRefusalCodes.DataNotAllowed, (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
-        HttpResponseMessage forbidden = await http.GetAsync("/api/ai/usage?scope=FIN");
+        HttpResponseMessage forbidden = await http.PostAsJsonAsync("/api/ai/usage", new AiUsageQuery(DateTime.UtcNow.AddDays(-1), DateTime.UtcNow, Finance));
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
     }
 

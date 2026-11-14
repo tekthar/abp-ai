@@ -6,6 +6,7 @@
     <Project Path="src/AbpAi.Contracts/AbpAi.Contracts.csproj" />
     <Project Path="src/AbpAi/AbpAi.csproj" />
     <Project Path="src/AbpAi.Agents/AbpAi.Agents.csproj" />
+    <Project Path="src/AbpAi.AspNetCore/AbpAi.AspNetCore.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AbpAi.Tests/AbpAi.Tests.csproj" />

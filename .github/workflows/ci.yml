@@ -1,6 +1,6 @@
 # Pushes to main and pull requests run the checks: no old product name (scripts/check-names.sh), build, the unit
 # tests, the integration tests against PostgreSQL through the sample host, pack, and no old product name in the
-# packages either. A v<version> tag runs the checks, then pushes the packages (AbpAi, AbpAi.Contracts, AbpAi.Agents) to
+# packages either. A v<version> tag runs the checks, then pushes the packages (AbpAi, AbpAi.Contracts, AbpAi.Agents, AbpAi.AspNetCore) to
 # nuget.org through Trusted Publishing (a one-hour key nuget.org gives this workflow, no stored secret) and makes a
 # GitHub release.
 
@@ -68,7 +68,7 @@ jobs:
       - name: The tag is the packages' version
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for id in AbpAi AbpAi.Contracts AbpAi.Agents; do
+          for id in AbpAi AbpAi.Contracts AbpAi.Agents AbpAi.AspNetCore; do
             test -f "artifacts/$id.$version.nupkg" || { echo "No $id.$version.nupkg: the tag and VersionPrefix/VersionSuffix differ."; ls artifacts; exit 1; }
           done
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
