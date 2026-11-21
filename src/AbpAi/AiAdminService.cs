@@ -512,7 +512,8 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
 
     /// <summary>
     /// Sets an alias on the site or a scope: its targets in order, each a connection the scope sees and a model of it
-    /// that's on. Its name is kept in lowercase (<see cref="IsAliasName"/>).
+    /// that's on (or a target the alias already has, whose model was switched off since). Its name is kept in lowercase
+    /// (<see cref="IsAliasName"/>).
     /// </summary>
     public async Task<AiAliasInfo> SetAliasAsync(AiActor actor, Guid? scopeId, string name, IReadOnlyList<AiAliasTarget> targets, CancellationToken ct)
     {
@@ -533,6 +534,9 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             access = isListed ? await AiRouter.AccessOfAsync(db, chain, ct) : null;
             return isListed;
         }, cancellationToken: ct);
+        // The targets the alias has now: one whose model was switched off since may stay, as the router passes it over.
+        List<AiAliasTarget> had = await aiDb.RunAsync(async db =>
+            (await db.AiAliases.AsNoTracking().FirstOrDefaultAsync(a => a.ScopeId == scopeId && a.Name == key, ct))?.Targets.ToList() ?? [], cancellationToken: ct);
         List<AiAliasTarget> kept = [];
         foreach (AiAliasTarget target in targets)
         {
@@ -546,8 +550,9 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             string? model = target.Model is null || connection.Models.Count == 0 ? target.Model : connection.ModelIdOf(target.Model)
                 ?? throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
 
-            // An alias leads to a model that's on: the one named, or the connection's first that's on when none is.
-            if (connection.Models.Count > 0 && (model ?? AiRouter.DefaultModel(connection)) is var chosen && (chosen is null || connection.SettingsOf(chosen) is { Enabled: false }))
+            // A new target leads to a model that's on: the one named, or the connection's first that's on when none is.
+            if (connection.Models.Count > 0 && (model ?? AiRouter.DefaultModel(connection)) is var chosen && (chosen is null || connection.SettingsOf(chosen) is { Enabled: false })
+                && !had.Contains(target with { Model = model }))
             {
                 throw new UserFriendlyException(chosen is null ? $"None of {connection.Name}'s models is on." : $"{connection.Name}'s {connection.NameOf(chosen)} is off.",
                     AiErrorCodes.Invalid);

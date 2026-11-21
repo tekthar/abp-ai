@@ -227,6 +227,18 @@ public sealed class AdminApiTests : IAsyncLifetime
         Guid dark = (await off.Content.ReadFromJsonAsync<AiConnectionInfo>())!.Id;
         Assert.Equal(HttpStatusCode.BadRequest, (await site.PutAsJsonAsync($"{Prefix}/aliases/dark", new[] { new AiAliasTarget(dark) })).StatusCode);
         Assert.DoesNotContain((await site.GetFromJsonAsync<List<AiAliasInfo>>($"{Prefix}/aliases"))!, a => a.Name is "old" or "dark");
+
+        // A fallback switched off after it was set stays when the alias is set again, as a screen sends it back unchanged.
+        HttpResponseMessage spareMade = await site.PostAsJsonAsync($"{Prefix}/connections", new AiConnectionInput("spare", "demo", ["spare-1"], [AiDataClasses.Public]));
+        Guid spare = (await spareMade.Content.ReadFromJsonAsync<AiConnectionInfo>())!.Id;
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/aliases/both", new[] { new AiAliasTarget(connection, "cloud-large"), new AiAliasTarget(spare) })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/connections/{spare}", new AiConnectionInput("spare", "demo", ["spare-1"], [AiDataClasses.Public])
+        {
+            ModelSettings = new Dictionary<string, AiModelSettings> { ["spare-1"] = new() { Enabled = false } },
+        })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/aliases/both", new[] { new AiAliasTarget(connection), new AiAliasTarget(spare) })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await site.PutAsJsonAsync($"{Prefix}/aliases/both", new[] { new AiAliasTarget(connection), new AiAliasTarget(spare), new AiAliasTarget(connection, "cloud-old") })).StatusCode);
     }
 
     [Fact]

@@ -12,9 +12,10 @@ All notable changes to AbpAi are written here. The format follows
   (`AiAdminService.IsAliasName`, `AliasNameLength`). `SetAliasAsync` and `PUT aliases/{name}` trim the name and keep it
   in lowercase (`Smart` is set as `smart`), and refuse any other name with 400. Aliases set before keep their names,
   lead where they did, and can still be deleted by them. The router still looks a name up as it's asked.
-- **An alias leads only to a model that's on.** A target naming a model that's off (by its id or its name), or a
-  connection none of whose models is on, is refused with 400. A model switched off later stays in its aliases, which
-  pass it over as before.
+- **An alias leads only to a model that's on.** A new target naming a model that's off (by its id or its name), or a
+  connection none of whose models is on, is refused with 400. A target the alias already has, whose model was switched
+  off since, may stay when the alias is set again (as a screen sends its fallbacks back unchanged); the router passes
+  it over as before.
 
 ## [0.8.1] - 2026-11-21
 
