@@ -4,6 +4,21 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
+## [0.8.1] - 2026-11-21
+
+A fix for AbpAi.HttpApi. Nothing to migrate, and nothing changes in the API.
+
+### Fixed
+
+- **No transaction is held open while the API waits on a provider or on storage.** ABP's unit of work made each POST,
+  PUT and DELETE one transaction for the whole request, and the services' reads and writes joined it. So `POST try`, a
+  connection's test, discovering a connection's models and making an export each kept a Postgres session `idle in
+  transaction` for as long as the model or the storage took. A connection saved with `test: true` was also committed
+  only after its test, a changed one's row locked meanwhile. The connections, try and exports controllers now run
+  with a unit of work that isn't transactional (`[UnitOfWork(isTransactional: false)]`). Each of their writes was
+  already atomic on its own (one `SaveChanges` or one statement), and a saved connection is now committed before its
+  test. A host test watches `pg_stat_activity` during each of those calls.
+
 ## [0.8.0] - 2026-11-14
 
 What the shared settings screens (`@abpjs/ui`'s AI area) found missing on 0.7.0, all additive: a host on 0.7.0 builds

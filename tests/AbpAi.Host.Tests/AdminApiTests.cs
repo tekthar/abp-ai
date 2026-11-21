@@ -28,16 +28,22 @@ public sealed class AdminApiTests : IAsyncLifetime
 
     private readonly string _database = "abp_ai_host_" + Guid.NewGuid().ToString("N")[..12];
     private WebApplicationFactory<Program>? _factory;
+    private ProbeProvider? _probe;
 
     public Task InitializeAsync()
     {
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", $"{GatewayHostTests.Server};Database={_database}");
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.ConfigureServices(s => s.Configure<AiHttpOptions>(o =>
+        _probe = new ProbeProvider($"{GatewayHostTests.Server};Database={_database}");
+        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.ConfigureServices(s =>
         {
-            o.RoutePrefix = Prefix;
-            o.OpenApiGroupName = "abpai";
-            o.Sensitive = action => action.Filters.Add(new SensitiveMark());
-        })));
+            s.Configure<AiHttpOptions>(o =>
+            {
+                o.RoutePrefix = Prefix;
+                o.OpenApiGroupName = "abpai";
+                o.Sensitive = action => action.Filters.Add(new SensitiveMark());
+            });
+            s.AddSingleton<IAiProvider>(_probe);
+        }));
         _ = _factory.Server; // starts the host, which makes the database
         return Task.CompletedTask;
     }
@@ -186,6 +192,33 @@ public sealed class AdminApiTests : IAsyncLifetime
         // Only those who administer the scope; nothing to say is the services' 400.
         Assert.Equal(HttpStatusCode.Forbidden, (await As(Ben).PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "Hi", Budget))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await finance.PostAsJsonAsync($"{Prefix}/try", new AiTryInput("fast", "", Budget))).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_call_to_a_provider_holds_no_transaction_open_and_a_connection_is_saved_before_its_test()
+    {
+        HttpClient site = As(SiteAdmin);
+
+        // Saved with a test: the connection is kept before the test's call, which sees it, under its new name after a change.
+        HttpResponseMessage made = await site.PostAsJsonAsync($"{Prefix}/connections",
+            new AiConnectionInput("probe", ProbeProvider.TheKind, ["probe-1"], [AiDataClasses.Public]) { Test = true });
+        Assert.Equal(HttpStatusCode.OK, made.StatusCode);
+        AiConnectionInfo connection = (await made.Content.ReadFromJsonAsync<AiConnectionInfo>())!;
+        Assert.True(connection.Test?.Ok, connection.Test?.Reason);
+        HttpResponseMessage changed = await site.PutAsJsonAsync($"{Prefix}/connections/{connection.Id}",
+            new AiConnectionInput("probe-2", ProbeProvider.TheKind, ["probe-1"], [AiDataClasses.Public]) { Test = true });
+        Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+
+        // A test on its own, and a try through an alias.
+        Assert.Equal(HttpStatusCode.OK, (await site.PostAsync($"{Prefix}/connections/{connection.Id}/test", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/aliases/probed", new[] { new AiAliasTarget(connection.Id) })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await site.PostAsJsonAsync($"{Prefix}/try", new AiTryInput("probed", "Say OK.", null, AiDataClasses.Public))).StatusCode);
+
+        ProbeSight[] seen = [.. _probe!.Seen];
+        Assert.Equal(["connection-test", "connection-test", "connection-test", AiAdminService.TryPurpose], seen.Select(s => s.Purpose));
+        Assert.All(seen, s => Assert.Equal(0, s.InTransaction));
+        Assert.Equal(["probe"], seen[0].Connections);
+        Assert.Equal(["probe-2"], seen[1].Connections);
     }
 
     [Fact]

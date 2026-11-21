@@ -80,6 +80,17 @@ What the shared screens (`@abpjs/ui`'s AI area) found missing on 0.7.0, all addi
   setting and hands out no one else's data, as a connection's test doesn't.
 - `IAiAccounts.NamesOfAsync`, a default member: people's and accounts' names, as usage's titles and on recent calls.
 
+## Fixed in 0.8.1: no transaction around a call out
+
+ABP runs a POST, PUT or DELETE in one transaction for the request, and `AiDb.RunAsync` joins it. For the actions that
+wait on something outside the database (a provider's test or try, discovering a connection's models, writing an export
+to storage), that kept a Postgres session idle in a transaction for the call's length, and committed a connection saved
+with a test only after the test. The connections, try and exports controllers carry `[UnitOfWork(isTransactional:
+false)]`: the unit of work stays, so a host's services that need one still have it, but no transaction spans the
+request. That's safe because each of their writes is one `SaveChanges` or one statement. A write added later that needs
+several statements to land together opens its own: `AiDb.RunAsync(..., requiresNew: true, isTransactional: true)`
+(without `requiresNew` it joins the request's).
+
 ## Steps
 
 1. The package: its module, `AiHttpOptions`, `IAiCurrentActor`, the route convention, `[AiSensitive]`, the error codes.

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.Mvc;
+using Volo.Abp.Uow;
 
 namespace AbpAi.HttpApi;
 
@@ -21,9 +22,12 @@ public class AiSiteController(AiAdminService admin, IAiCurrentActor actor) : Abp
 
 /// <summary>
 /// Connections to model providers, the site's or a scope's (<c>scopeId</c>). A host that keeps its own connections lists
-/// them here and sets them where it keeps them: creating, changing or deleting one answers 409.
+/// them here and sets them where it keeps them: creating, changing or deleting one answers 409. Its actions call the
+/// provider (a test, its models), so none holds a transaction open for the call: each write commits on its own, a saved
+/// connection before its test.
 /// </summary>
 [Route("connections")]
+[UnitOfWork(isTransactional: false)]
 public class AiConnectionsController(AiAdminService admin, IAiCurrentActor actor) : AbpControllerBase
 {
     [HttpGet]
@@ -135,9 +139,11 @@ public sealed record AiRefusalAnswer(string Code, string Message, AiLimitRef? Li
 /// <summary>
 /// One call to try an alias from a settings screen, as the caller, for those who administer the scope (or the site):
 /// checked like any call and kept in usage (purpose <c>try</c>). A refusal (no model, a limit, the data rules, the
-/// provider) answers 422 with the gateway's code and, for a limit, which and when it frees.
+/// provider) answers 422 with the gateway's code and, for a limit, which and when it frees. No transaction is held open
+/// for the model's call: the ledger's writes commit on their own.
 /// </summary>
 [Route("try")]
+[UnitOfWork(isTransactional: false)]
 public class AiTryController(AiAdminService admin, IAiCurrentActor actor) : AbpControllerBase
 {
     [HttpPost]

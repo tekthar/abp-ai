@@ -124,6 +124,46 @@ public sealed class CachingProvider : IAiProvider
     public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
+/// <summary>
+/// A provider that looks at the database while it's called, from a session of its own: how many of the host's sessions
+/// sit in an open transaction (Postgres's <c>idle in transaction</c>), and the connections' names as they're committed.
+/// </summary>
+public sealed class ProbeProvider(string connectionString) : IAiProvider
+{
+    public const string TheKind = "probe";
+
+    public string Kind => TheKind;
+
+    /// <summary>What each call saw, in order.</summary>
+    public ConcurrentQueue<ProbeSight> Seen { get; } = new();
+
+    public async Task<AiProviderReply> CompleteAsync(AiProviderCall call, CancellationToken cancellationToken)
+    {
+        await using Npgsql.NpgsqlConnection connection = new(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using Npgsql.NpgsqlCommand open = new("SELECT count(*)::int FROM pg_stat_activity WHERE datname = current_database() "
+            + "AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%'", connection);
+        int inTransaction = (int)(await open.ExecuteScalarAsync(cancellationToken))!;
+        List<string> names = [];
+        await using Npgsql.NpgsqlCommand read = new("SELECT \"Name\" FROM ai.connections ORDER BY \"Name\"", connection);
+        await using (Npgsql.NpgsqlDataReader rows = await read.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await rows.ReadAsync(cancellationToken))
+            {
+                names.Add(rows.GetString(0));
+            }
+        }
+
+        Seen.Enqueue(new ProbeSight(call.Purpose, inTransaction, names));
+        return new AiProviderReply(AiMessages.AssistantText("OK"), 5, 1);
+    }
+
+    public IAsyncEnumerable<AiStreamEvent> StreamAsync(AiProviderCall call, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+/// <summary>What <see cref="ProbeProvider"/> saw during a call: its purpose, the host's sessions in a transaction, and the connections' names.</summary>
+public sealed record ProbeSight(string? Purpose, int InTransaction, IReadOnlyList<string> Connections);
+
 /// <summary>A provider whose model gives vectors of 8 places whatever size a call asks for, as a model that can't shorten them does.</summary>
 public sealed class FixedSizeEmbedder : IAiProvider
 {

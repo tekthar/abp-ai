@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Mvc;
+using Volo.Abp.Uow;
 
 namespace AbpAi.HttpApi;
 
@@ -45,8 +46,10 @@ public sealed record AiExportRequest(DateTime From, DateTime To, Guid? ScopeId =
 /// <summary>
 /// Exports of a period's calls for support (one line of JSON each, gzipped, with prompts and replies where the site keeps
 /// them), for the site's owner (<see cref="IAiRights.IsSiteOwnerAsync"/>). Kept a week; each is in the host's audit.
+/// Making one reads many calls and writes a file to storage, so no transaction is held open for it.
 /// </summary>
 [Route("exports")]
+[UnitOfWork(isTransactional: false)]
 public class AiExportsController(AiExportService exports, IAiCurrentActor actor) : AbpControllerBase
 {
     [HttpGet]
