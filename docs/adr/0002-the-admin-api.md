@@ -91,6 +91,13 @@ request. That's safe because each of their writes is one `SaveChanges` or one st
 several statements to land together opens its own: `AiDb.RunAsync(..., requiresNew: true, isTransactional: true)`
 (without `requiresNew` it joins the request's).
 
+## Changed in 0.9.0: what an alias may be
+
+An alias's name is lowercase letters, digits and dashes, from a letter, at most 40 long: a `PUT aliases/{name}` keeps it
+in lowercase and refuses any other with 400, as the screens already wrote them. A new target must lead to a model that's
+on; one the alias already has, whose model was switched off since, may stay, because a screen sends an alias's fallbacks
+back as they were. Aliases set before keep their names. The router is unchanged: it looks a name up as it's asked.
+
 ## Steps
 
 1. The package: its module, `AiHttpOptions`, `IAiCurrentActor`, the route convention, `[AiSensitive]`, the error codes.
