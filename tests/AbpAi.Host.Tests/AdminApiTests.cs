@@ -195,6 +195,41 @@ public sealed class AdminApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_alias_is_named_in_lowercase_and_leads_only_to_a_model_thats_on()
+    {
+        HttpClient site = As(SiteAdmin);
+        HttpResponseMessage made = await site.PostAsJsonAsync($"{Prefix}/connections", new AiConnectionInput("cloud", "demo", ["cloud-large", "cloud-old"], [AiDataClasses.Public])
+        {
+            ModelSettings = new Dictionary<string, AiModelSettings> { ["cloud-old"] = new() { Name = "Old", Enabled = false } },
+        });
+        Guid connection = (await made.Content.ReadFromJsonAsync<AiConnectionInfo>())!.Id;
+
+        // Kept in lowercase, as the router is asked for it.
+        HttpResponseMessage upper = await site.PutAsJsonAsync($"{Prefix}/aliases/%20Smart-2%20", new[] { new AiAliasTarget(connection) });
+        Assert.Equal(HttpStatusCode.OK, upper.StatusCode);
+        Assert.Equal("smart-2", (await upper.Content.ReadFromJsonAsync<AiAliasInfo>())!.Name);
+
+        // Letters, digits and dashes, from a letter, at most 40.
+        foreach (string bad in new[] { "two%20words", "2fast", "-fast", "fast_lane", "fast.lane", new string('a', AiAdminService.AliasNameLength + 1) })
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, (await site.PutAsJsonAsync($"{Prefix}/aliases/{bad}", new[] { new AiAliasTarget(connection) })).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await site.PutAsJsonAsync($"{Prefix}/aliases/{new string('a', AiAdminService.AliasNameLength)}", new[] { new AiAliasTarget(connection) })).StatusCode);
+
+        // A model that's off, by its id or its name, isn't a target; nor is a connection whose models are all off.
+        Assert.Equal(HttpStatusCode.BadRequest, (await site.PutAsJsonAsync($"{Prefix}/aliases/old", new[] { new AiAliasTarget(connection, "cloud-old") })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await site.PutAsJsonAsync($"{Prefix}/aliases/old", new[] { new AiAliasTarget(connection, "Old") })).StatusCode);
+        HttpResponseMessage off = await site.PostAsJsonAsync($"{Prefix}/connections", new AiConnectionInput("dark", "demo", ["dark-1"], [AiDataClasses.Public])
+        {
+            ModelSettings = new Dictionary<string, AiModelSettings> { ["dark-1"] = new() { Enabled = false } },
+        });
+        Guid dark = (await off.Content.ReadFromJsonAsync<AiConnectionInfo>())!.Id;
+        Assert.Equal(HttpStatusCode.BadRequest, (await site.PutAsJsonAsync($"{Prefix}/aliases/dark", new[] { new AiAliasTarget(dark) })).StatusCode);
+        Assert.DoesNotContain((await site.GetFromJsonAsync<List<AiAliasInfo>>($"{Prefix}/aliases"))!, a => a.Name is "old" or "dark");
+    }
+
+    [Fact]
     public async Task A_call_to_a_provider_holds_no_transaction_open_and_a_connection_is_saved_before_its_test()
     {
         HttpClient site = As(SiteAdmin);

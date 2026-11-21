@@ -17,7 +17,8 @@ AbpAgent.
   translate to and from it. A call may give its system prompt as blocks (with `cache_control`) and more of the
   provider's request as `ProviderOptions` (`thinking`, `temperature`).
 - **Aliases:** `fast`, `smart`, `local`. The call's scope's first, then each scope above it, then the site's, else a
-  model by its name. An alias has targets in order; the ones after the first are its fallbacks.
+  model by its name. An alias has targets in order; the ones after the first are its fallbacks. Its name is lowercase
+  letters, digits and dashes, and each target is set to a model that's on.
 - **Models with what they can do:** each of a connection's models has a name to call it by, is on or off, and says
   whether it takes tools and images and follows a schema; a call goes to the first target that can do what it needs.
   A provider lists the models it offers, and an admin adds what it finds, each off until it's turned on.

@@ -4,6 +4,18 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
+## [Unreleased]
+
+### Changed
+
+- **An alias's name is lowercase letters, digits and dashes,** from a letter and at most 40 long
+  (`AiAdminService.IsAliasName`, `AliasNameLength`). `SetAliasAsync` and `PUT aliases/{name}` trim the name and keep it
+  in lowercase (`Smart` is set as `smart`), and refuse any other name with 400. Aliases set before keep their names,
+  lead where they did, and can still be deleted by them. The router still looks a name up as it's asked.
+- **An alias leads only to a model that's on.** A target naming a model that's off (by its id or its name), or a
+  connection none of whose models is on, is refused with 400. A model switched off later stays in its aliases, which
+  pass it over as before.
+
 ## [0.8.1] - 2026-11-21
 
 A fix for AbpAi.HttpApi. Nothing to migrate, and nothing changes in the API.

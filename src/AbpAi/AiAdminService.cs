@@ -510,14 +510,18 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         return [.. found.Select(Info)];
     }
 
-    /// <summary>Sets an alias on the site or a scope: its targets in order, each a connection the scope sees.</summary>
+    /// <summary>
+    /// Sets an alias on the site or a scope: its targets in order, each a connection the scope sees and a model of it
+    /// that's on. Its name is kept in lowercase (<see cref="IsAliasName"/>).
+    /// </summary>
     public async Task<AiAliasInfo> SetAliasAsync(AiActor actor, Guid? scopeId, string name, IReadOnlyList<AiAliasTarget> targets, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
-        string key = name.Trim();
-        if (key.Length is 0 or > 100 || targets.Count == 0)
+        string key = name.Trim().ToLowerInvariant();
+        if (!IsAliasName(key) || targets.Count == 0)
         {
-            throw new UserFriendlyException("An alias has a name and at least one target.", AiErrorCodes.Invalid);
+            throw new UserFriendlyException($"An alias's name is lowercase letters, digits and dashes, from a letter, at most {AliasNameLength} long; and it has at least one target.",
+                AiErrorCodes.Invalid);
         }
 
         AiScopeChain chain = await chains.OfAsync(scopeId, ct);
@@ -541,6 +545,13 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
             // A model named by its name is kept by its id, so renaming it later doesn't break the alias.
             string? model = target.Model is null || connection.Models.Count == 0 ? target.Model : connection.ModelIdOf(target.Model)
                 ?? throw new UserFriendlyException($"{connection.Name} doesn't offer {target.Model}.", AiErrorCodes.Invalid);
+
+            // An alias leads to a model that's on: the one named, or the connection's first that's on when none is.
+            if (connection.Models.Count > 0 && (model ?? AiRouter.DefaultModel(connection)) is var chosen && (chosen is null || connection.SettingsOf(chosen) is { Enabled: false }))
+            {
+                throw new UserFriendlyException(chosen is null ? $"None of {connection.Name}'s models is on." : $"{connection.Name}'s {connection.NameOf(chosen)} is off.",
+                    AiErrorCodes.Invalid);
+            }
 
             // When the site lists what scopes may use, a scope's alias leads only to the site's models open to it.
             if (listed && connection.ScopeId is null && (model ?? AiRouter.DefaultModel(connection)) is { } used && access?.Opens(connection.Id, used) != true)
@@ -567,6 +578,17 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
         }, cancellationToken: ct);
     }
 
+    /// <summary>The longest an alias's name may be.</summary>
+    public const int AliasNameLength = 40;
+
+    /// <summary>
+    /// Whether a name may be an alias's: lowercase ASCII letters, digits and dashes, from a letter, at most
+    /// <see cref="AliasNameLength"/> long (<c>smart</c>, <c>fast-2</c>). Aliases set before AbpAi 0.9.0 keep the names they have.
+    /// </summary>
+    public static bool IsAliasName(string name) =>
+        name.Length is > 0 and <= AliasNameLength && char.IsAsciiLetterLower(name[0]) && name.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '-');
+
+    /// <summary>Takes an alias away, by the name it has (one set before the name rule too).</summary>
     public async Task DeleteAliasAsync(AiActor actor, Guid? scopeId, string name, CancellationToken ct)
     {
         await AdminAsync(actor, scopeId, ct);
