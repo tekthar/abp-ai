@@ -59,23 +59,43 @@ public sealed class TestRecord
     public Guid? Reader { get; set; }
 }
 
-/// <summary>Who reads, adds and manages where, set by each test.</summary>
-public sealed class TestRights : IDocumentsRights
+/// <summary>
+/// Who reads, adds and manages where, set by each test. Like a host's rights that read the host's tables, it wants a unit
+/// of work around every call.
+/// </summary>
+public sealed class TestRights(Volo.Abp.Uow.IUnitOfWorkManager units) : IDocumentsRights
 {
+    private void InUnit()
+    {
+        if (units.Current is null)
+        {
+            throw new InvalidOperationException("The host's rights were asked outside a unit of work.");
+        }
+    }
+
     public ConcurrentDictionary<Guid, DocumentsReach> Readable { get; } = new();
 
     public ConcurrentDictionary<(Guid, Guid?), bool> Adds { get; } = new();
 
     public ConcurrentDictionary<(Guid, Guid?), bool> Manages { get; } = new();
 
-    public Task<DocumentsReach> ReadableAsync(Guid accountId, CancellationToken cancellationToken) =>
-        Task.FromResult(Readable.TryGetValue(accountId, out DocumentsReach? reach) ? reach : DocumentsReach.None);
+    public Task<DocumentsReach> ReadableAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        InUnit();
+        return Task.FromResult(Readable.TryGetValue(accountId, out DocumentsReach? reach) ? reach : DocumentsReach.None);
+    }
 
-    public Task<bool> MayAddAsync(Guid accountId, Guid? scopeId, CancellationToken cancellationToken) =>
-        Task.FromResult(Adds.TryGetValue((accountId, scopeId), out bool may) && may);
+    public Task<bool> MayAddAsync(Guid accountId, Guid? scopeId, CancellationToken cancellationToken)
+    {
+        InUnit();
+        return Task.FromResult(Adds.TryGetValue((accountId, scopeId), out bool may) && may);
+    }
 
-    public Task<bool> MayManageAsync(Guid accountId, Guid? scopeId, CancellationToken cancellationToken) =>
-        Task.FromResult(Manages.TryGetValue((accountId, scopeId), out bool may) && may);
+    public Task<bool> MayManageAsync(Guid accountId, Guid? scopeId, CancellationToken cancellationToken)
+    {
+        InUnit();
+        return Task.FromResult(Manages.TryGetValue((accountId, scopeId), out bool may) && may);
+    }
 }
 
 /// <summary>The host's rule beyond scopes: a document on a restricted record is only its reader's, as an EXISTS against the host's table.</summary>

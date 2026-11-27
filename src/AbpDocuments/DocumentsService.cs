@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Volo.Abp;
 using Volo.Abp.BlobStoring;
 using Volo.Abp.DependencyInjection;
+using Volo.Abp.Uow;
 
 namespace AbpDocuments;
 
@@ -109,6 +110,7 @@ public class DocumentsService(
     IEnumerable<IDocumentSource> sources,
     DocumentsSignal signal,
     AiDataRules dataRules,
+    IUnitOfWorkManager units,
     IOptions<DocumentsOptions> options) : ITransientDependency
 {
     private DocumentsOptions O => options.Value;
@@ -142,7 +144,7 @@ public class DocumentsService(
     /// <summary>Adds an uploaded file to a scope's library, once it's known by its bytes and within the limits. It's read in the background.</summary>
     public async Task<DocumentInfo> AddAsync(Guid accountId, Guid? scopeId, string fileName, string? dataClass, Stream content, CancellationToken cancellationToken)
     {
-        if (!await rights.MayAddAsync(accountId, scopeId, cancellationToken))
+        if (!await InUnitAsync(() => rights.MayAddAsync(accountId, scopeId, cancellationToken)))
         {
             throw new UserFriendlyException("You may not add documents here.", DocumentsErrorCodes.Forbidden);
         }
@@ -150,7 +152,7 @@ public class DocumentsService(
         string cls = ClassOf(dataClass);
         // An adder files a document at the default class or a stricter one; a less strict class (its text going to more
         // models) is the scope's managers' to give.
-        if (Below(cls, ClassOf(null)) && !await rights.MayManageAsync(accountId, scopeId, cancellationToken))
+        if (Below(cls, ClassOf(null)) && !await InUnitAsync(() => rights.MayManageAsync(accountId, scopeId, cancellationToken)))
         {
             throw new UserFriendlyException($"Only those who manage this place may file a document as {cls}: choose {ClassOf(null)} or stricter.",
                 DocumentsErrorCodes.Forbidden);
@@ -451,12 +453,24 @@ public class DocumentsService(
     {
         Document d = await documentsDb.RunAsync(db => FindReadableAsync(db, accountId, id, ct), cancellationToken: ct)
             ?? throw new UserFriendlyException("There's no such document.", DocumentsErrorCodes.NotFound);
-        if ((allowAdder && d.AddedBy == accountId) || await rights.MayManageAsync(accountId, d.ScopeId, ct))
+        if ((allowAdder && d.AddedBy == accountId) || await InUnitAsync(() => rights.MayManageAsync(accountId, d.ScopeId, ct)))
         {
             return d;
         }
 
         throw new UserFriendlyException("You may not change this document.", DocumentsErrorCodes.Forbidden);
+    }
+
+    /// <summary>
+    /// A host's seam, inside a unit of work: its rights may read its own tables, and a caller (an API action, an agent's
+    /// tool) needn't have one. One already there is joined.
+    /// </summary>
+    private async Task<T> InUnitAsync<T>(Func<Task<T>> work)
+    {
+        using IUnitOfWork uow = units.Begin(new AbpUnitOfWorkOptions { IsTransactional = false });
+        T result = await work();
+        await uow.CompleteAsync();
+        return result;
     }
 
     internal Task<Document> RequeueAsync(Guid id, string work, CancellationToken ct) =>
