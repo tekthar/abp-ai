@@ -4,6 +4,28 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
+## [Unreleased]
+
+Two new packages; AbpAi's own are unchanged.
+
+### Added
+
+- **`AbpDocuments` and `AbpDocuments.HttpApi`: documents people add, read in the background and searched**
+  ([ADR 0003](docs/adr/0003-documents.md), [guide](docs/documents.md)). PDF (its text layer; scanned pages and
+  pictures through a model that reads images, alias `read`), Word, plain text and Markdown, known by their bytes; pages
+  kept with their headings, cut into passages within a page, embedded through `IAi.EmbedAsync` (alias `embeddings`)
+  and kept with PostgreSQL full-text in English and Arabic. Every server reads documents in the background, one per
+  document under AbpCluster's lock; a limit leaves a document waiting, not failed; a new embedding model embeds again
+  from the kept text. Search ranks only what a person may read (the host's scopes and its own filter, in the same
+  query), by meaning and by words merged by reciprocal rank, within the classes a caller asks for. Uploads go to
+  AbpCluster.Storage's `documents` store; a host's own files are read in place by source and key, with versions and
+  hiding. Every model call carries the document's data class and scope and a purpose (`documents:read`, `:embed`,
+  `:search`). A host's migration makes the tables and the `vector` extension.
+
+### Changed
+
+- CI's PostgreSQL is `pgvector/pgvector:pg17`, which AbpDocuments' tests need.
+
 ## [0.10.0] - 2026-11-27
 
 One method added for a host, so a minor version: a host that doesn't call it builds and behaves as before. Nothing

@@ -53,6 +53,8 @@ AbpAgent.
 | `AbpAi` | The service, the ledger, limits, notices, connections, the admin and usage services, the built-in providers; tables in schema `ai` | ABP, EF Core (PostgreSQL) |
 | `AbpAi.Agents` | AbpAgent's `IAgentModels` on top of `IAi`, so neither package needs the other | Both (not on nuget.org until AbpAgent's contracts are) |
 | `AbpAi.HttpApi` | The admin API over HTTP: site settings, connections, aliases, limits, scopes' access, a scope's own view, a call to try, usage, exports, under a prefix the host sets | `AbpAi`, ABP's MVC |
+| `AbpDocuments` | Documents people add, read in the background (PDF, scanned pages and pictures through a model that reads images, Word, text), cut into passages, embedded through `IAi`, and searched by meaning and words among only what a person may read; tables in schema `documents` ([guide](docs/documents.md), [ADR 0003](docs/adr/0003-documents.md)) | `AbpAi`, AbpCluster and AbpCluster.Storage, PostgreSQL with pgvector |
+| `AbpDocuments.HttpApi` | The documents' API over HTTP: a scope's library, uploads checked by their bytes, pages, files, search, under a prefix the host sets | `AbpDocuments`, ABP's MVC |
 
 Coming from ABP's module template? [Where ABP's layers are in this repository](docs/abp-layers.md).
 
@@ -110,7 +112,12 @@ AbpAi](docs/moving-onto-abp-ai.md). Why it is shaped this way, and the answers t
 dotnet build AbpAi.slnx
 ```
 
-The host tests need PostgreSQL on localhost:5432 (postgres/postgres), or the server `ABP_AI_TEST_POSTGRES` names.
+The host tests need PostgreSQL on localhost:5432 (postgres/postgres), or the server `ABP_AI_TEST_POSTGRES` names, with
+the `vector` extension for AbpDocuments' (the `pgvector/pgvector:pg17` image has it):
+
+```bash
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg17
+```
 
 ```bash
 dotnet test AbpAi.slnx
@@ -120,8 +127,8 @@ bash scripts/check-names.sh   # no product's name but AbpAi's
 ## Releasing
 
 Set `VersionPrefix` and `VersionSuffix` in `Directory.Build.props`, move CHANGELOG.md's Unreleased to the version, and
-push a tag `v<version>` (`v0.2.0`). CI runs the checks, then pushes `AbpAi`, `AbpAi.Contracts`, `AbpAi.Agents` and
-`AbpAi.HttpApi` to
+push a tag `v<version>` (`v0.2.0`). CI runs the checks, then pushes `AbpAi`, `AbpAi.Contracts`, `AbpAi.Agents`,
+`AbpAi.HttpApi`, `AbpDocuments` and `AbpDocuments.HttpApi` to
 nuget.org through Trusted Publishing (the policy names this repository, `ci.yml` and the `release` environment; the
 repository variable `NUGET_USER` is the nuget.org account) and makes a GitHub release.
 
