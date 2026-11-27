@@ -66,6 +66,35 @@ public class ReadingTests
     }
 
     [Fact]
+    public void A_Word_file_that_unzips_to_far_more_than_it_is_is_refused_before_it_is_unzipped()
+    {
+        byte[] docx = TestFiles.Word("Title", "Body", "Second", "More");
+        using MemoryStream bomb = new();
+        bomb.Write(docx);
+        using (System.IO.Compression.ZipArchive zip = new(bomb, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+        {
+            using Stream big = zip.CreateEntry("word/media/padding.bin", System.IO.Compression.CompressionLevel.SmallestSize).Open();
+            big.Write(new byte[8 * 1024 * 1024]);
+        }
+
+        DocumentUnreadableException refused = Assert.Throws<DocumentUnreadableException>(() => PageReaders.Read(DocumentKinds.Word, bomb.ToArray(), 10));
+        Assert.Contains("unzips to", refused.Message);
+        Assert.Throws<DocumentUnreadableException>(() => PageReaders.Read(DocumentKinds.Word, docx, new ReadLimits(10, MaxUnzippedBytes: 100), default));
+    }
+
+    [Fact]
+    public void Text_past_the_limits_is_refused_with_the_reason()
+    {
+        byte[] onePage = Encoding.UTF8.GetBytes(new string('a', 600_000));
+        Assert.Contains("Page 1 has 600,000 characters", Assert.Throws<DocumentUnreadableException>(() => PageReaders.Read(DocumentKinds.Text, onePage, 10)).Message);
+        byte[] pages = Encoding.UTF8.GetBytes(string.Join('', Enumerable.Repeat(new string('b', 100), 5)));
+        Assert.Contains("500 characters", Assert.Throws<DocumentUnreadableException>(() =>
+            PageReaders.Read(DocumentKinds.Text, pages, new ReadLimits(10, MaxCharacters: 400), default)).Message);
+        Assert.Throws<DocumentUnreadableException>(() => PageReaders.Read(DocumentKinds.Pdf,
+            TestFiles.Pdf(("Terms", ["A line of text that is long enough."])), new ReadLimits(10, MaxCharacters: 10), default));
+    }
+
+    [Fact]
     public void Plain_text_is_a_page_per_form_feed()
     {
         IReadOnlyList<SourcePage> pages = PageReaders.Read(DocumentKinds.Text, "First page.\fSecond page."u8.ToArray(), 10);

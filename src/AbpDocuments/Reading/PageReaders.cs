@@ -21,20 +21,52 @@ public sealed record SourcePage(int Number, string Text, byte[]? Image = null, s
 /// <summary>A file that can't be read: damaged, protected, or over a limit. The document fails with the message.</summary>
 public sealed class DocumentUnreadableException(string message, Exception? inner = null) : Exception(message, inner);
 
+/// <summary>How much of a file is read: pages, characters in all and on one page, and a Word file's unzipped bytes.</summary>
+public sealed record ReadLimits(int MaxPages, int MaxCharacters = 2_000_000, int MaxPageCharacters = 500_000, long MaxUnzippedBytes = 100L * 1024 * 1024)
+{
+    /// <summary>The most a zip's entry may grow on unzipping, past a megabyte.</summary>
+    public const int MaxZipRatio = 100;
+
+    public static ReadLimits Of(DocumentsOptions o) => new(o.MaxPages, o.MaxCharacters, o.MaxPageCharacters, o.MaxUnzippedBytes);
+}
+
 /// <summary>Takes the pages out of a file of a kind, without models: the text a file holds, and the images a model must read.</summary>
 public static class PageReaders
 {
     /// <summary>Under this many letters, a PDF page with an image is a scanned page.</summary>
     internal const int ScannedBelow = 20;
 
-    public static IReadOnlyList<SourcePage> Read(DocumentKind kind, byte[] bytes, int maxPages) => kind.Name switch
+    public static IReadOnlyList<SourcePage> Read(DocumentKind kind, byte[] bytes, int maxPages) => Read(kind, bytes, new ReadLimits(maxPages), CancellationToken.None);
+
+    /// <summary>
+    /// The file's pages, within the limits: past one, the file is unreadable with the reason. The token is checked
+    /// between pages.
+    /// </summary>
+    public static IReadOnlyList<SourcePage> Read(DocumentKind kind, byte[] bytes, ReadLimits limits, CancellationToken cancellationToken)
     {
-        "pdf" => Pdf(bytes, maxPages),
-        "docx" => Word(bytes, maxPages),
-        "text" or "markdown" => Text(DocumentKinds.TextOf(bytes), maxPages),
-        _ when kind.Image => [new SourcePage(1, "", bytes, kind.ContentType)],
-        _ => throw new DocumentUnreadableException($"A {kind.Name} file isn't one the package reads."),
-    };
+        IReadOnlyList<SourcePage> pages = kind.Name switch
+        {
+            "pdf" => Pdf(bytes, limits, cancellationToken),
+            "docx" => Word(bytes, limits),
+            "text" or "markdown" => Text(DocumentKinds.TextOf(bytes), limits.MaxPages),
+            _ when kind.Image => [new SourcePage(1, "", bytes, kind.ContentType)],
+            _ => throw new DocumentUnreadableException($"A {kind.Name} file isn't one the package reads."),
+        };
+        long total = 0;
+        foreach (SourcePage page in pages)
+        {
+            if (page.Text.Length > limits.MaxPageCharacters)
+            {
+                throw new DocumentUnreadableException($"Page {page.Number} has {page.Text.Length:N0} characters; a page is read up to {limits.MaxPageCharacters:N0}.");
+            }
+
+            total += page.Text.Length;
+        }
+
+        return total > limits.MaxCharacters
+            ? throw new DocumentUnreadableException($"It has {total:N0} characters of text; a document is read up to {limits.MaxCharacters:N0}.")
+            : pages;
+    }
 
     // ---- Plain text and Markdown: a page per form feed.
 
@@ -51,8 +83,9 @@ public static class PageReaders
 
     // ---- PDF: its text layer, page by page; a page with (almost) no text is scanned, its largest image read by a model.
 
-    internal static IReadOnlyList<SourcePage> Pdf(byte[] bytes, int maxPages)
+    internal static IReadOnlyList<SourcePage> Pdf(byte[] bytes, ReadLimits limits, CancellationToken cancellationToken)
     {
+        int maxPages = limits.MaxPages;
         PdfDocument pdf;
         try
         {
@@ -75,8 +108,10 @@ public static class PageReaders
             }
 
             List<SourcePage> pages = [];
+            long characters = 0;
             for (int n = 1; n <= pdf.NumberOfPages; n++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 PdfPage page;
                 try
                 {
@@ -88,6 +123,12 @@ public static class PageReaders
                 }
 
                 string text = PdfText(page);
+                characters += text.Length;
+                if (characters > limits.MaxCharacters)
+                {
+                    throw new DocumentUnreadableException($"It has more than {limits.MaxCharacters:N0} characters of text; a document is read up to that.");
+                }
+
                 int letters = text.Count(char.IsLetterOrDigit);
                 if (letters < ScannedBelow && LargestImage(page) is { } image)
                 {
@@ -218,8 +259,10 @@ public static class PageReaders
 
     // ---- Word: paragraphs with headings by style, tables as rows, a page at each page break.
 
-    internal static IReadOnlyList<SourcePage> Word(byte[] bytes, int maxPages)
+    internal static IReadOnlyList<SourcePage> Word(byte[] bytes, ReadLimits limits)
     {
+        int maxPages = limits.MaxPages;
+        CheckZip(bytes, limits.MaxUnzippedBytes);
         WordprocessingDocument doc;
         try
         {
@@ -300,6 +343,36 @@ public static class PageReaders
         if (props?.SectionProperties?.GetFirstChild<SectionType>()?.Val?.Value is { } type && type != SectionMarkValues.Continuous)
         {
             pages.Break();
+        }
+    }
+
+    /// <summary>
+    /// A zip that unzips to far more than it is (a zip bomb) is refused before anything is unzipped: its entries' sizes
+    /// as the zip states them, in all and each against its packed size.
+    /// </summary>
+    internal static void CheckZip(byte[] bytes, long maxUnzipped)
+    {
+        try
+        {
+            using System.IO.Compression.ZipArchive zip = new(new MemoryStream(bytes, writable: false), System.IO.Compression.ZipArchiveMode.Read);
+            long total = 0;
+            foreach (System.IO.Compression.ZipArchiveEntry entry in zip.Entries)
+            {
+                total += entry.Length;
+                if (entry.Length > 1024 * 1024 && entry.Length > (long)ReadLimits.MaxZipRatio * Math.Max(1, entry.CompressedLength))
+                {
+                    throw new DocumentUnreadableException($"The Word file's {entry.FullName} unzips to {entry.Length / (1024 * 1024):N0} MB from {entry.CompressedLength / 1024:N0} KB, which no real document does.");
+                }
+
+                if (total > maxUnzipped)
+                {
+                    throw new DocumentUnreadableException($"The Word file unzips to more than {maxUnzipped / (1024 * 1024):N0} MB.");
+                }
+            }
+        }
+        catch (InvalidDataException e)
+        {
+            throw new DocumentUnreadableException("The Word file is damaged and can't be read.", e);
         }
     }
 

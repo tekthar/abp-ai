@@ -71,6 +71,11 @@ public class DocumentsIndexer(
         }
 
         stamp = marked;
+        // A file that takes too long (a hostile PDF) fails rather than holding its lock: past ReadTimeout, the reading is
+        // left (its thread finishes on its own) and the document ends failed.
+        using CancellationTokenSource reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        reading.CancelAfter(O.ReadTimeout);
+        CancellationToken ct = reading.Token;
         try
         {
             List<(int Number, string Text)> pages;
@@ -78,16 +83,16 @@ public class DocumentsIndexer(
             if (embedOnly)
             {
                 pages = await documentsDb.RunAsync(db => db.DocumentPages.AsNoTracking().Where(p => p.DocumentId == id).OrderBy(p => p.Number)
-                    .Select(p => new ValueTuple<int, string>(p.Number, p.Text)).ToListAsync(cancellationToken), cancellationToken: cancellationToken);
+                    .Select(p => new ValueTuple<int, string>(p.Number, p.Text)).ToListAsync(ct), cancellationToken: ct);
             }
             else
             {
-                (pages, version, stamp) = await ReadPagesAsync(doc, stamp, cancellationToken);
+                (pages, version, stamp) = await ReadPagesAsync(doc, stamp, ct);
             }
 
             IReadOnlyList<CutPassage> cut = Passages.Cut(pages, O.PassageLength, O.PassageOverlap);
-            (List<float[]>? vectors, string? model, string? problem) = await EmbedAsync(doc, cut, cancellationToken);
-            await SaveAsync(doc, stamp, cut, vectors, model, problem, version, cancellationToken);
+            (List<float[]>? vectors, string? model, string? problem) = await EmbedAsync(doc, cut, ct);
+            await SaveAsync(doc, stamp, cut, vectors, model, problem, version, ct);
             await events.OnAsync(new DocumentEvent(DocumentActions.Ready, id, doc.ScopeId, doc.Name, null), cancellationToken);
         }
         catch (AiRefusedException e) when (IsWait(e))
@@ -103,6 +108,10 @@ public class DocumentsIndexer(
         catch (DocumentUnreadableException e)
         {
             await FailAsync(doc, stamp, e.Message, cancellationToken);
+        }
+        catch (OperationCanceledException) when (reading.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            await FailAsync(doc, stamp, $"Reading it took longer than {O.ReadTimeout.TotalMinutes:0.#} minutes.", cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -131,7 +140,8 @@ public class DocumentsIndexer(
 
         DocumentKind kind = DocumentKinds.Sniff(read.Bytes, doc.Name)
             ?? throw new DocumentUnreadableException("Its file isn't a kind that's read: a PDF, a Word file, text or Markdown, or a PNG, JPEG or WebP picture.");
-        IReadOnlyList<SourcePage> source = PageReaders.Read(kind, read.Bytes, O.MaxPages);
+        // On a thread of its own, so the time limit holds even while a parser doesn't look at the token.
+        IReadOnlyList<SourcePage> source = await Task.Run(() => PageReaders.Read(kind, read.Bytes, ReadLimits.Of(O), ct), ct).WaitAsync(ct);
         int imagePages = source.Count(p => p.NeedsModel);
         if (imagePages > O.MaxImagePages)
         {

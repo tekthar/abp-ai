@@ -131,6 +131,12 @@ public class DocumentsService(
             ?? throw new UserFriendlyException($"\"{wanted}\" isn't a class a document may have ({string.Join(", ", DataClasses)}).", DocumentsErrorCodes.Invalid);
     }
 
+    private bool Below(string cls, string than)
+    {
+        List<string> order = [.. DataClasses];
+        return order.IndexOf(cls) < order.IndexOf(than);
+    }
+
     // ---- For people.
 
     /// <summary>Adds an uploaded file to a scope's library, once it's known by its bytes and within the limits. It's read in the background.</summary>
@@ -142,6 +148,14 @@ public class DocumentsService(
         }
 
         string cls = ClassOf(dataClass);
+        // An adder files a document at the default class or a stricter one; a less strict class (its text going to more
+        // models) is the scope's managers' to give.
+        if (Below(cls, ClassOf(null)) && !await rights.MayManageAsync(accountId, scopeId, cancellationToken))
+        {
+            throw new UserFriendlyException($"Only those who manage this place may file a document as {cls}: choose {ClassOf(null)} or stricter.",
+                DocumentsErrorCodes.Forbidden);
+        }
+
         byte[] bytes = await ReadAllAsync(content, O.MaxBytes, cancellationToken);
         if (bytes.Length == 0)
         {

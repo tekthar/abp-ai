@@ -80,7 +80,10 @@ that may not receive it isn't chosen:
 - no model may embed it: it's searched by its words only, and its problem says so.
 
 When the embedding alias leads to another model, documents are embedded again from their kept text within
-`ModelCheckEvery` (10 minutes).
+`ModelCheckEvery` (10 minutes). Until a document is done, search finds it by its words only.
+
+Whoever adds a document files it at the default class (`DefaultDataClass`) or a stricter one. A less strict class lets
+its text go to more models, so it's for those who may manage the place (`MayManageAsync`), or the class route later.
 
 Usage shows the calls by purpose: `documents:read`, `documents:embed` and `documents:search`.
 
@@ -108,6 +111,9 @@ counted in `Withheld`, never returned.
 | `MaxBytes` | 26214400 (25 MB) | The most bytes a file may have. The API takes up to 64 MB a request. |
 | `MaxPages` | 500 | The most pages a document may have. |
 | `MaxImagePages` | 100 | The most scanned pages of one document read by a model. |
+| `MaxCharacters`, `MaxPageCharacters` | 2000000, 500000 | The most characters of text in a document and on one page (a text or Word file with no breaks is one page). |
+| `MaxUnzippedBytes` | 104857600 (100 MB) | The most a Word file may unzip to; an entry over a megabyte that grows more than 100 times is refused too. |
+| `ReadTimeout` | 00:05:00 | The longest one document's reading may take; past it, it fails. |
 | `PassageLength`, `PassageOverlap` | 1200, 150 | About how long a passage is, and how much the next repeats. |
 | `PollEvery` | 00:00:05 | How often a server looks for documents to read. |
 | `RetryWait`, `MaxRetryWait` | 00:01:00, 01:00:00 | The first wait after a limit or a busy model, doubling to the most. |

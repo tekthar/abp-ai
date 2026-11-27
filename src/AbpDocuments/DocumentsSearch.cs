@@ -118,6 +118,8 @@ public class DocumentsSearch(DocumentsDb documentsDb, DocumentsService documents
                         InputType = AiEmbedInputTypes.Query,
                         Purpose = DocumentsPurposes.Search,
                         AccountId = accountId,
+                        // A search of one scope is that scope's call: its AI access and limits hold for the question too.
+                        ScopeId = input.ScopeIds is [Guid oneScope] ? oneScope : null,
                         DataClass = options.Value.QuestionDataClass,
                     }, cancellationToken)).Vectors[0];
                 }

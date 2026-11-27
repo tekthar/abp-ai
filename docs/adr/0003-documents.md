@@ -48,7 +48,11 @@ with the `vector` extension (pgvector).
   puts it back (a record in the trash and out of it), its passages kept.
 - **Uploads are checked by their bytes**, never their name or the type the browser sent: PDF, Word (`.docx`: a zip with
   `word/document.xml`), plain text and Markdown (UTF-8, no NUL), PNG, JPEG and WebP. The most bytes per file and pages
-  per document are options (25 MB and 500 pages by default).
+  per document are options (25 MB and 500 pages by default), and so is the text: 2 million characters a document and
+  500,000 a page. A Word file is refused before it's unzipped when it would unzip to more than 100 MB, or an entry over a
+  megabyte would grow more than 100 times. A reading that takes longer than 5 minutes fails.
+- **Who sets the class.** Whoever adds a document files it at the default class or a stricter one; a less strict class
+  lets its text go to more models, so it's for those who manage the scope.
 
 ### Reading, cutting, embedding
 

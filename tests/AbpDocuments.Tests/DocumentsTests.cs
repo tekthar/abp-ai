@@ -214,6 +214,27 @@ public sealed class DocumentsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_adder_files_at_the_default_class_or_stricter_and_a_slow_reading_fails()
+    {
+        await _host.UseDemoModelsAsync();
+        Reads(Contractor, North);
+        // Public lets text go to more models: only a manager may file a document so.
+        UserFriendlyException refused = await Assert.ThrowsAsync<UserFriendlyException>(() => _host.AddAsync(Contractor, North, "flyer.txt", Utf8("Open day."), "public"));
+        Assert.Equal(DocumentsErrorCodes.Forbidden, refused.Code);
+        Assert.Equal("sensitive", (await _host.AddAsync(Contractor, North, "hr.txt", Utf8("Salaries."), "sensitive")).DataClass);
+        _host.Rights.Manages[(Manager, North)] = true;
+        Assert.Equal("public", (await _host.AddAsync(Manager, North, "flyer.txt", Utf8("Open day."), "public")).DataClass);
+
+        // A reading past its time ends failed, its lock let go.
+        _host.Get<Microsoft.Extensions.Options.IOptions<DocumentsOptions>>().Value.ReadTimeout = TimeSpan.FromMilliseconds(1);
+        DocumentInfo slow = await _host.AddAsync(Manager, North, "slow.pdf", TestFiles.Pdf(("Terms", ["Long reading."])));
+        await _host.ReadAllAsync();
+        DocumentInfo failed = (await Documents.GetAsync(Contractor, slow.Id, default))!;
+        Assert.Equal(DocumentStatuses.Failed, failed.Status);
+        Assert.Contains("took longer than", failed.Problem);
+    }
+
+    [Fact]
     public async Task Deleting_changing_and_forgetting()
     {
         await _host.UseDemoModelsAsync();

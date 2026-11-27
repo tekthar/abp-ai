@@ -11,6 +11,18 @@ public sealed class DocumentsOptions
     /// <summary>The most pages a document may have: 500.</summary>
     public int MaxPages { get; set; } = 500;
 
+    /// <summary>The most characters of text a document may have: 2 million (about a thousand pages).</summary>
+    public int MaxCharacters { get; set; } = 2_000_000;
+
+    /// <summary>The most characters one page may have: 500,000 (a text or Word file with no page breaks is one page).</summary>
+    public int MaxPageCharacters { get; set; } = 500_000;
+
+    /// <summary>The most bytes a Word file may unzip to: 100 MB.</summary>
+    public long MaxUnzippedBytes { get; set; } = 100L * 1024 * 1024;
+
+    /// <summary>The longest one document's reading may take before it fails: 5 minutes.</summary>
+    public TimeSpan ReadTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
     /// <summary>The most pages of one document read by a model from their images: 100.</summary>
     public int MaxImagePages { get; set; } = 100;
 
