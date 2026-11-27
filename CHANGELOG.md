@@ -4,6 +4,16 @@ All notable changes to AbpAi are written here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the packages follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- **`AiAdminService.ForgetScopeAsync(scopeId)`, for a host purging a scope.** It takes away the scope's own
+  connections (their keys with them), its aliases, limits and access, the prompts and replies kept of its calls, and the
+  exports made of it, in one transaction, and gives back how many of each (`AiScopeForgotten`). Its calls stay on the
+  ledger without their text, so the limits set above it still count them. It checks no rights and isn't in the API.
+  Nothing to migrate.
+
 ## [0.9.0] - 2026-11-21
 
 Two rules for setting an alias, so a minor version: a host that sets aliases only with lowercase names and to models

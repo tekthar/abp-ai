@@ -134,6 +134,9 @@ public sealed record AiConnectionInfo(Guid Id, Guid? ScopeId, string Name, strin
 
 public sealed record AiAliasInfo(Guid Id, Guid? ScopeId, string Name, IReadOnlyList<AiAliasTarget> Targets, DateTime UpdatedAt);
 
+/// <summary>What <see cref="AiAdminService.ForgetScopeAsync"/> took away: how many of each, and whether the scope had access of its own.</summary>
+public sealed record AiScopeForgotten(Guid ScopeId, int Connections, int Aliases, int Limits, bool Access, int Prompts, int Exports);
+
 /// <summary>
 /// A limit as an admin sets it: its kind (<see cref="AiLimitKinds"/>), period (none for <c>call-tokens</c>), amount, whose
 /// for <c>account</c> or <c>group</c> (and, for <c>call-tokens</c>, an account when it's one account's), and what it counts.
@@ -274,6 +277,34 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     {
         await SiteAdminAsync(actor, ct);
         await aiDb.RunAsync(db => db.AiScopeAccess.Where(a => a.Id == scopeId).ExecuteDeleteAsync(ct), cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Forgets a scope the host has deleted for good: its own connections (their keys with them; a host that keeps the
+    /// connections deletes a scope's where it keeps them), its aliases and limits,
+    /// its access, the prompts and replies kept of its calls, and the exports made of it. Its calls stay in usage, the
+    /// ledger of what was spent, by whom and on which model, without their text: so the limits set above it still count
+    /// them, and the site's and its parents' usage still add up. For the host, when it purges a scope: it checks no
+    /// rights and isn't behind the API. It forgets that one scope; the host names each scope it purges. An export of the
+    /// site, or of a scope above it, may still hold its calls until its days are up. A second call finds nothing.
+    /// </summary>
+    public async Task<AiScopeForgotten> ForgetScopeAsync(Guid scopeId, CancellationToken ct)
+    {
+        if (scopeId == Guid.Empty)
+        {
+            throw new ArgumentException("A scope to forget is named.", nameof(scopeId));
+        }
+
+        return await aiDb.RunAsync(async db =>
+        {
+            int prompts = await db.AiPrompts.Where(p => db.AiUsage.Any(u => u.Id == p.Id && u.ScopeId == scopeId)).ExecuteDeleteAsync(ct);
+            int exports = await db.AiExports.Where(e => e.ScopeId == scopeId).ExecuteDeleteAsync(ct);
+            int connections = await db.AiConnections.Where(c => c.ScopeId == scopeId).ExecuteDeleteAsync(ct);
+            int aliases = await db.AiAliases.Where(a => a.ScopeId == scopeId).ExecuteDeleteAsync(ct);
+            int limits = await db.AiLimits.Where(l => l.ScopeId == scopeId).ExecuteDeleteAsync(ct);
+            bool access = await db.AiScopeAccess.Where(a => a.Id == scopeId).ExecuteDeleteAsync(ct) > 0;
+            return new AiScopeForgotten(scopeId, connections, aliases, limits, access, prompts, exports);
+        }, cancellationToken: ct, isTransactional: true);
     }
 
     /// <summary>

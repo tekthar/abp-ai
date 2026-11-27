@@ -198,6 +198,17 @@ connections set on it and above it while it may use them, each with its connecti
 scope's own), the aliases it gets from above (the nearest of each name it doesn't set itself), the limits set above it,
 whether it may connect its own, and whether the host keeps the connections.
 
+## When a scope is deleted for good
+
+Call `AiAdminService.ForgetScopeAsync(scopeId)` when you purge a scope (a project deleted for good, not one moved to a
+bin). It takes away what's set on that scope: its own connections and their keys, its aliases and limits, and its
+access. It also takes away the prompts and replies kept of its calls, and the exports made of it. It gives back how
+many of each it took (`AiScopeForgotten`). Its calls stay in usage, without their text. That's the ledger: so the limits
+set above it still count what it spent, and the usage of the site and of the scopes above it still adds up. It's the
+host's own call: it checks no rights and isn't in the API. It forgets that one scope, so name each scope you purge. An
+export of the site or of a scope above it may still hold the scope's calls until its days are up (`AbpAi:ExportDays`).
+When you keep the connections yourself, delete the scope's where you keep them. A second call finds nothing.
+
 ## Calls: system blocks and provider options
 
 `AiRequest.SystemBlocks` takes the system prompt as the Messages API's blocks (with `cache_control`, for a provider's
