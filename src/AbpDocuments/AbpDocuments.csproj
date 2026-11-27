@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpDocuments: documents people add, read in the background and searched by meaning and by words together, for ABP apps on .NET 10 and PostgreSQL with pgvector. PDF (its text layer, and scanned pages through a model that reads images), Word, plain text and Markdown, and pictures; passages within a page with their headings, vectors through AbpAi, full-text in Arabic and English; one server per document under AbpCluster's lock; search that ranks only what the person may read, by the host's scopes and its own rules in the same query. Uploads in AbpCluster.Storage, or a host's own files read in place. Your tables, through IDocumentsDbContext.</Description>
+    <PackageTags>abp;documents;search;rag;embeddings;pgvector;full-text;pdf;docx;ocr;postgresql</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AbpAi\AbpAi.csproj" />
+    <PackageReference Include="AbpCluster" Version="$(AbpClusterVersion)" />
+    <PackageReference Include="AbpCluster.Storage" Version="$(AbpClusterVersion)" />
+    <PackageReference Include="Volo.Abp.EntityFrameworkCore.PostgreSql" Version="$(AbpVersion)" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AbpDocuments.Tests" />
+  </ItemGroup>
+
+</Project>

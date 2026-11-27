@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>AbpDocuments.HttpApi: AbpDocuments' API over HTTP, under a route prefix the host sets. A scope's documents with how their reading stands, adding a file (checked by its bytes), a document's pages and its file, reading it again, renaming it or changing its class, deleting it, and search, each checked against the host's rights.</Description>
+    <PackageTags>abp;documents;search;api;aspnetcore</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\AbpDocuments\AbpDocuments.csproj" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="$(AbpVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AbpDocuments.Tests" />
+  </ItemGroup>
+
+</Project>
