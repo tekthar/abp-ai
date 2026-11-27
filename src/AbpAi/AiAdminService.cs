@@ -286,7 +286,9 @@ public sealed class AiAdminService(AiDb aiDb, IAiRights rights, AiScopeChains ch
     /// ledger of what was spent, by whom and on which model, without their text: so the limits set above it still count
     /// them, and the site's and its parents' usage still add up. For the host, when it purges a scope: it checks no
     /// rights and isn't behind the API. It forgets that one scope; the host names each scope it purges. An export of the
-    /// site, or of a scope above it, may still hold its calls until its days are up. A second call finds nothing.
+    /// site, or of a scope above it, may still hold its calls until its days are up. It runs in the caller's unit of work
+    /// when there is one (so in the purge's transaction, when that has one), else in a transaction of its own. A second
+    /// call finds nothing, so a purge that's run again finishes it.
     /// </summary>
     public async Task<AiScopeForgotten> ForgetScopeAsync(Guid scopeId, CancellationToken ct)
     {

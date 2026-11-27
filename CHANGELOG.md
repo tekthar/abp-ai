@@ -10,7 +10,8 @@ All notable changes to AbpAi are written here. The format follows
 
 - **`AiAdminService.ForgetScopeAsync(scopeId)`, for a host purging a scope.** It takes away the scope's own
   connections (their keys with them), its aliases, limits and access, the prompts and replies kept of its calls, and the
-  exports made of it, in one transaction, and gives back how many of each (`AiScopeForgotten`). Its calls stay on the
+  exports made of it, and gives back how many of each (`AiScopeForgotten`). It runs in the caller's unit of work when
+  there is one (the purge's transaction), else in a transaction of its own. Its calls stay on the
   ledger without their text, so the limits set above it still count them. It checks no rights and isn't in the API.
   Nothing to migrate.
 

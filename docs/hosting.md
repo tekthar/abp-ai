@@ -207,7 +207,9 @@ many of each it took (`AiScopeForgotten`). Its calls stay in usage, without thei
 set above it still count what it spent, and the usage of the site and of the scopes above it still adds up. It's the
 host's own call: it checks no rights and isn't in the API. It forgets that one scope, so name each scope you purge. An
 export of the site or of a scope above it may still hold the scope's calls until its days are up (`AbpAi:ExportDays`).
-When you keep the connections yourself, delete the scope's where you keep them. A second call finds nothing.
+When you keep the connections yourself, delete the scope's where you keep them. It runs in your unit of work when there
+is one, so call it in the purge's transaction and both go or neither does. Without one, it runs in a transaction of its
+own. A second call finds nothing, so a purge that's run again finishes it.
 
 ## Calls: system blocks and provider options
 
