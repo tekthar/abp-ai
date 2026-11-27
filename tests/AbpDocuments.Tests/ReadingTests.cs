@@ -80,6 +80,12 @@ public class ReadingTests
         DocumentUnreadableException refused = Assert.Throws<DocumentUnreadableException>(() => PageReaders.Read(DocumentKinds.Word, bomb.ToArray(), 10));
         Assert.Contains("unzips to", refused.Message);
         Assert.Throws<DocumentUnreadableException>(() => PageReaders.Read(DocumentKinds.Word, docx, new ReadLimits(10, MaxUnzippedBytes: 100), default));
+
+        // What's really read counts too, whatever the zip's headers say: a part's XML past half the limit in characters.
+        byte[] lengthy = TestFiles.Word("Title", string.Join(' ', Enumerable.Repeat("words", 120_000)), "Second", "More");
+        DocumentUnreadableException read = Assert.Throws<DocumentUnreadableException>(() =>
+            PageReaders.Read(DocumentKinds.Word, lengthy, new ReadLimits(10, MaxUnzippedBytes: 1024 * 1024), default));
+        Assert.Contains("unzips to more than 1 MB", read.Message);
     }
 
     [Fact]

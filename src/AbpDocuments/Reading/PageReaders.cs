@@ -262,11 +262,14 @@ public static class PageReaders
     internal static IReadOnlyList<SourcePage> Word(byte[] bytes, ReadLimits limits)
     {
         int maxPages = limits.MaxPages;
+        // The sizes the zip states first, then what's really read: a part's XML past half the unzipped bytes in characters
+        // is refused as it's read, whatever the zip's headers say.
         CheckZip(bytes, limits.MaxUnzippedBytes);
+        long maxCharacters = Math.Max(1024, limits.MaxUnzippedBytes / 2);
         WordprocessingDocument doc;
         try
         {
-            doc = WordprocessingDocument.Open(new MemoryStream(bytes, writable: false), false);
+            doc = WordprocessingDocument.Open(new MemoryStream(bytes, writable: false), false, new OpenSettings { MaxCharactersInPart = maxCharacters });
         }
         catch (Exception e)
         {
@@ -274,6 +277,22 @@ public static class PageReaders
         }
 
         using (doc)
+        {
+            try
+            {
+                return WordText(doc, maxPages);
+            }
+            catch (Exception e) when (e is System.Xml.XmlException or InvalidDataException or OpenXmlPackageException && !(e is DocumentUnreadableException))
+            {
+                throw e.Message.Contains("MaxCharacters", StringComparison.Ordinal) || e.InnerException?.Message.Contains("MaxCharacters", StringComparison.Ordinal) == true
+                    ? new DocumentUnreadableException($"The Word file unzips to more than {limits.MaxUnzippedBytes / (1024 * 1024):N0} MB.", e)
+                    : new DocumentUnreadableException("The Word file is damaged and can't be read.", e);
+            }
+        }
+    }
+
+    private static IReadOnlyList<SourcePage> WordText(WordprocessingDocument doc, int maxPages)
+    {
         {
             Body body = doc.MainDocumentPart?.Document?.Body ?? throw new DocumentUnreadableException("The Word file has no text.");
             Dictionary<string, int> headingStyles = HeadingStyles(doc.MainDocumentPart.StyleDefinitionsPart?.Styles);
